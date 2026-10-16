@@ -19,7 +19,7 @@ jobs:
           set -euo pipefail
           test -f .bootstrap/ready
           cat .bootstrap/part-* | base64 --decode > /tmp/docflow.tar.xz
-          echo 'ARCHIVE_SHA256_REPLACE /tmp/docflow.tar.xz' | sha256sum -c -
+          echo '243429829877d5aba93c093d10b92406e2cba5659514d91bcbbb40d8721c5038 /tmp/docflow.tar.xz' | sha256sum -c -
           tar -xJf /tmp/docflow.tar.xz --strip-components=1
           rm -rf .bootstrap
           git config user.name 'github-actions[bot]'
