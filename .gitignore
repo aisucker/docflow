@@ -7,3 +7,9 @@ bin/
 data/
 *.log
 .DS_Store
+
+local-config.json
+docflow-api*.exe
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

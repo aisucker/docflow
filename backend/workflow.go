@@ -17,14 +17,19 @@ type Condition struct {
 	Value    any    `json:"value"`
 }
 type Step struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Mode        string     `json:"mode"`
-	AssigneeIDs []string   `json:"assignee_ids"`
-	Condition   *Condition `json:"condition,omitempty"`
+	Kind         string           `json:"kind,omitempty"`
+	Instructions string           `json:"instructions,omitempty"`
+	ButtonCodes  []string         `json:"button_codes,omitempty"`
+	Actions      []WorkflowButton `json:"actions,omitempty"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Mode         string           `json:"mode"`
+	AssigneeIDs  []string         `json:"assignee_ids"`
+	Condition    *Condition       `json:"condition,omitempty"`
 }
 type Flow struct {
-	Steps []Step `json:"steps"`
+	CompletionStatus string `json:"completion_status,omitempty"`
+	Steps            []Step `json:"steps"`
 }
 type flowInput struct {
 	Key        string `json:"workflow_key"`
@@ -37,22 +42,30 @@ func validateFlow(f Flow) string {
 	if len(f.Steps) == 0 || len(f.Steps) > 40 {
 		return "Маршрут должен содержать 1–40 этапов"
 	}
+	if f.CompletionStatus != "" && f.CompletionStatus != "approved" && f.CompletionStatus != "completed" {
+		return "Некорректный итоговый статус"
+	}
 	seen := map[string]bool{}
 	for _, step := range f.Steps {
 		if !codePattern.MatchString(step.ID) || seen[step.ID] || strings.TrimSpace(step.Title) == "" {
 			return "Некорректный идентификатор или название этапа"
 		}
 		seen[step.ID] = true
+		switch step.Kind {
+		case "", "approval", "task", "acknowledgement", "registration":
+		default:
+			return "Неизвестный тип этапа"
+		}
 		if step.Mode != "all" && step.Mode != "any" {
 			return "Режим этапа должен быть all или any"
 		}
 		if len(step.AssigneeIDs) == 0 || len(step.AssigneeIDs) > 30 {
-			return "Укажите от 1 до 30 согласующих"
+			return "Укажите от 1 до 30 исполнителей"
 		}
 		ids := map[string]bool{}
 		for _, id := range step.AssigneeIDs {
 			if !goodID(id) || ids[id] {
-				return "Некорректный или повторяющийся согласующий"
+				return "Некорректный или повторяющийся исполнитель"
 			}
 			ids[id] = true
 		}
@@ -115,7 +128,7 @@ func (s *Server) validateAssignees(ctx context.Context, flow Flow) string {
 	for id := range ids {
 		var active bool
 		if err := s.db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", id).Scan(&active); err != nil || !active {
-			return "Согласующий отсутствует или заблокирован: " + id
+			return "Исполнитель отсутствует или заблокирован: " + id
 		}
 	}
 	return ""
@@ -168,13 +181,17 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, msg)
 		return
 	}
+	if msg := s.prepareFlow(r.Context(), &v.Definition); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
 	if msg := s.validateAssignees(r.Context(), v.Definition); msg != "" {
 		fail(w, 400, msg)
 		return
 	}
 	b, _ := json.Marshal(v.Definition)
 	var id string
-	err := s.db.QueryRow(r.Context(), "INSERT INTO workflow_definitions(workflow_key,version,name,doc_type_id,definition,created_by) VALUES($1,1,$2,$3,$4,$5) RETURNING id", v.Key, v.Name, nullableStr(v.DocTypeID), b, me(r).ID).Scan(&id)
+	err := s.db.QueryRow(r.Context(), "INSERT INTO workflow_definitions(workflow_key,version,name,doc_type_id,definition,created_by) VALUES($1,1,$2,$3,$4,$5) RETURNING id", strings.TrimSpace(v.Key), strings.TrimSpace(v.Name), nullableStr(v.DocTypeID), b, me(r).ID).Scan(&id)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -197,6 +214,10 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg := validateFlow(v.Definition); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
+	if msg := s.prepareFlow(r.Context(), &v.Definition); msg != "" {
 		fail(w, 400, msg)
 		return
 	}
@@ -293,6 +314,10 @@ func (s *Server) startWorkflow(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Повреждено определение маршрута")
 		return
 	}
+	if msg := s.validateAssignees(r.Context(), f); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
 	var instance string
 	err = tx.QueryRow(r.Context(), "INSERT INTO workflow_instances(document_id,definition_id,definition_snapshot,started_by) VALUES($1,$2,$3,$4) RETURNING id", docID, in.WorkflowID, defRaw, p.ID).Scan(&instance)
 	if err != nil {
@@ -338,6 +363,13 @@ func (s *Server) advance(ctx context.Context, tx pgx.Tx, instance, docID string,
 		if _, err := tx.Exec(ctx, "UPDATE workflow_instances SET current_step=$1 WHERE id=$2", i, instance); err != nil {
 			return err
 		}
+		docStatus := "in_progress"
+		if step.Kind == "" || step.Kind == "approval" {
+			docStatus = "in_review"
+		}
+		if _, err := tx.Exec(ctx, "UPDATE documents SET status=$1,updated_at=now() WHERE id=$2", docStatus, docID); err != nil {
+			return err
+		}
 		for _, assignee := range step.AssigneeIDs {
 			if _, err := tx.Exec(ctx, "INSERT INTO workflow_tasks(instance_id,document_id,step_index,step_id,title,assignee_id) VALUES($1,$2,$3,$4,$5,$6)", instance, docID, i, step.ID, step.Title, assignee); err != nil {
 				return err
@@ -345,16 +377,20 @@ func (s *Server) advance(ctx context.Context, tx pgx.Tx, instance, docID string,
 		}
 		return event(ctx, tx, docID, "", "workflow.step_started", map[string]any{"step": step.ID, "index": i})
 	}
-	if _, err := tx.Exec(ctx, "UPDATE workflow_instances SET status='approved',completed_at=now(),current_step=$1 WHERE id=$2", len(f.Steps), instance); err != nil {
+	finalStatus := f.CompletionStatus
+	if finalStatus == "" {
+		finalStatus = "approved"
+	}
+	if _, err := tx.Exec(ctx, "UPDATE workflow_instances SET status=$3,completed_at=now(),current_step=$1 WHERE id=$2", len(f.Steps), instance, finalStatus); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, "UPDATE documents SET status='approved',updated_at=now() WHERE id=$1", docID); err != nil {
+	if _, err := tx.Exec(ctx, "UPDATE documents SET status=$2,updated_at=now() WHERE id=$1", docID, finalStatus); err != nil {
 		return err
 	}
-	if err := event(ctx, tx, docID, "", "workflow.approved", map[string]any{"instance_id": instance}); err != nil {
+	if err := event(ctx, tx, docID, "", "workflow."+finalStatus, map[string]any{"instance_id": instance}); err != nil {
 		return err
 	}
-	return emit(ctx, tx, "workflow.approved", map[string]any{"document_id": docID})
+	return emit(ctx, tx, "workflow."+finalStatus, map[string]any{"document_id": docID})
 }
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	p := me(r)
@@ -362,7 +398,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "pending"
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.document_id,d.title,t.step_index,t.title,t.status,t.created_at,u.full_name FROM workflow_tasks t JOIN documents d ON d.id=t.document_id JOIN users u ON t.assignee_id=u.id WHERE t.assignee_id=$1 AND t.status=$2 AND d.deleted_at IS NULL ORDER BY t.created_at DESC LIMIT 100`, p.ID, status)
+	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.document_id,d.title,t.step_index,t.title,t.status,t.created_at,u.full_name FROM workflow_tasks t JOIN documents d ON d.id=t.document_id JOIN users u ON t.assignee_id=u.id WHERE t.assignee_id=$1 AND (t.status=$2 OR ($2='pending' AND t.status='in_progress')) AND d.deleted_at IS NULL ORDER BY t.created_at DESC LIMIT 100`, p.ID, status)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -384,18 +420,11 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 	p := me(r)
 	var in struct {
-		Decision string `json:"decision"`
-		Comment  string `json:"comment"`
+		Decision   string `json:"decision"`
+		ActionCode string `json:"action_code"`
+		Comment    string `json:"comment"`
 	}
 	if !decode(w, r, &in) {
-		return
-	}
-	if in.Decision != "approve" && in.Decision != "reject" && in.Decision != "return" {
-		fail(w, 400, "Допустимые решения: approve, reject, return")
-		return
-	}
-	if (in.Decision == "reject" || in.Decision == "return") && strings.TrimSpace(in.Comment) == "" {
-		fail(w, 400, "Укажите причину отклонения или возврата")
 		return
 	}
 	taskID := r.PathValue("id")
@@ -427,12 +456,12 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 		errDB(w, err)
 		return
 	}
-	if instStatus != "active" || taskStatus != "pending" || stepIdx != taskStep {
+	if instStatus != "active" || (taskStatus != "pending" && taskStatus != "in_progress") || stepIdx != taskStep {
 		fail(w, 409, "Задача уже обработана или этап завершён")
 		return
 	}
 	if p.ID != userID {
-		fail(w, 403, "Вы не назначены согласующим")
+		fail(w, 403, "Вы не назначены исполнителем")
 		return
 	}
 	var flow Flow
@@ -440,21 +469,74 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 		errDB(w, err)
 		return
 	}
-	if stepIdx >= len(flow.Steps) {
+	if stepIdx < 0 || stepIdx >= len(flow.Steps) {
 		fail(w, 500, "Некорректное состояние маршрута")
 		return
 	}
-	status := map[string]string{"approve": "approved", "reject": "rejected", "return": "returned"}[in.Decision]
-	if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status=$1,comment=$2,decided_at=now() WHERE id=$3", status, in.Comment, taskID); err != nil {
+	code := in.ActionCode
+	if code == "" {
+		code = in.Decision
+	}
+	var action *WorkflowButton
+	for _, b := range stepButtons(flow.Steps[stepIdx]) {
+		if b.Code == code {
+			chosen := b
+			action = &chosen
+			break
+		}
+	}
+	if action == nil {
+		fail(w, 400, "Эта кнопка недоступна на текущем этапе")
+		return
+	}
+	if (action.CommentRequired || action.Effect == "return" || action.Effect == "reject") && strings.TrimSpace(in.Comment) == "" {
+		fail(w, 400, "Для этого действия требуется комментарий")
+		return
+	}
+	status := ""
+	switch action.Effect {
+	case "complete":
+		status = "completed"
+		if flow.Steps[stepIdx].Kind == "" || flow.Steps[stepIdx].Kind == "approval" {
+			status = "approved"
+		}
+	case "return":
+		status = "returned"
+	case "reject":
+		status = "rejected"
+	case "start":
+		if taskStatus != "pending" {
+			fail(w, 409, "Задача уже принята в работу")
+			return
+		}
+		if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status='in_progress',comment=$2,action_code=$3,action_label=$4 WHERE id=$1", taskID, in.Comment, action.Code, action.Label); err != nil {
+			errDB(w, err)
+			return
+		}
+		if err = event(r.Context(), tx, docID, p.ID, "workflow.task_started", map[string]any{"task_id": taskID, "action_code": action.Code, "action_label": action.Label, "comment": in.Comment}); err != nil {
+			errDB(w, err)
+			return
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			errDB(w, err)
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
+		return
+	default:
+		fail(w, 500, "Некорректное действие в маршруте")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status=$1,comment=$2,decided_at=now(),action_code=$4,action_label=$5 WHERE id=$3", status, in.Comment, taskID, action.Code, action.Label); err != nil {
 		errDB(w, err)
 		return
 	}
-	if err = event(r.Context(), tx, docID, p.ID, "workflow.task_"+status, map[string]any{"task_id": taskID, "comment": in.Comment}); err != nil {
+	if err = event(r.Context(), tx, docID, p.ID, "workflow.task_"+status, map[string]any{"task_id": taskID, "comment": in.Comment, "action_code": action.Code, "action_label": action.Label}); err != nil {
 		errDB(w, err)
 		return
 	}
-	if in.Decision != "approve" {
-		if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status='cancelled' WHERE instance_id=$1 AND step_index=$2 AND status='pending'", instance, stepIdx); err != nil {
+	if action.Effect != "complete" {
+		if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status='cancelled' WHERE instance_id=$1 AND step_index=$2 AND status IN ('pending','in_progress')", instance, stepIdx); err != nil {
 			errDB(w, err)
 			return
 		}
@@ -472,7 +554,7 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		var pending, approved int
-		err = tx.QueryRow(r.Context(), `SELECT count(*) FILTER(WHERE status='pending'),count(*) FILTER(WHERE status='approved') FROM workflow_tasks WHERE instance_id=$1 AND step_index=$2`, instance, stepIdx).Scan(&pending, &approved)
+		err = tx.QueryRow(r.Context(), `SELECT count(*) FILTER(WHERE status IN ('pending','in_progress')),count(*) FILTER(WHERE status IN ('approved','completed')) FROM workflow_tasks WHERE instance_id=$1 AND step_index=$2`, instance, stepIdx).Scan(&pending, &approved)
 		if err != nil {
 			errDB(w, err)
 			return
@@ -480,7 +562,7 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 		step := flow.Steps[stepIdx]
 		isDone := (step.Mode == "any" && approved > 0) || (step.Mode == "all" && pending == 0)
 		if isDone {
-			if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status='cancelled' WHERE instance_id=$1 AND step_index=$2 AND status='pending'", instance, stepIdx); err != nil {
+			if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status='cancelled' WHERE instance_id=$1 AND step_index=$2 AND status IN ('pending','in_progress')", instance, stepIdx); err != nil {
 				errDB(w, err)
 				return
 			}

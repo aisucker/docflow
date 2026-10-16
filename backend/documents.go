@@ -112,7 +112,7 @@ func (s *Server) listDocuments(w http.ResponseWriter, r *http.Request) {
  WHERE d.deleted_at IS NULL AND ($6 IN ('admin','registrar') OR d.author_id=$1 OR d.assignee_id=$1 OR EXISTS(SELECT 1 FROM workflow_tasks t WHERE t.document_id=d.id AND t.assignee_id=$1))
  AND ($2='' OR d.title ILIKE '%'||$2||'%' OR d.summary ILIKE '%'||$2||'%' OR d.registration_number ILIKE '%'||$2||'%')
  AND ($3='' OR d.status=$3) AND ($4='' OR d.type_id::text=$4)
- AND ($7<> 'mine' OR d.author_id=$1) AND ($7<> 'inbox' OR EXISTS(SELECT 1 FROM workflow_tasks t WHERE t.document_id=d.id AND t.assignee_id=$1 AND t.status='pending'))
+ AND ($7<> 'mine' OR d.author_id=$1) AND ($7<> 'inbox' OR EXISTS(SELECT 1 FROM workflow_tasks t WHERE t.document_id=d.id AND t.assignee_id=$1 AND t.status IN ('pending','in_progress')))
  ORDER BY d.created_at DESC LIMIT $5`, args...)
 	if err != nil {
 		errDB(w, err)
@@ -322,7 +322,7 @@ func (s *Server) documentRoute(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Документ не найден")
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.step_index,t.step_id,t.title,t.status,t.comment,t.created_at,t.decided_at,u.full_name,t.assignee_id FROM workflow_tasks t JOIN users u ON t.assignee_id=u.id WHERE t.document_id=$1 ORDER BY t.created_at,t.step_index`, id)
+	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.step_index,t.step_id,t.title,t.status,t.comment,t.created_at,t.decided_at,u.full_name,t.assignee_id,wi.definition_snapshot,t.action_label FROM workflow_tasks t JOIN workflow_instances wi ON wi.id=t.instance_id JOIN users u ON t.assignee_id=u.id WHERE t.document_id=$1 ORDER BY t.created_at,t.step_index`, id)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -330,15 +330,35 @@ func (s *Server) documentRoute(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var taskID, stepID, title, st, comment, name, assigneeID string
+		var taskID, stepID, title, st, comment, name, assigneeID, actionLabel string
+		var snapshot []byte
 		var idx int
 		var created time.Time
 		var decided *time.Time
-		if e := rows.Scan(&taskID, &idx, &stepID, &title, &st, &comment, &created, &decided, &name, &assigneeID); e != nil {
+		if e := rows.Scan(&taskID, &idx, &stepID, &title, &st, &comment, &created, &decided, &name, &assigneeID, &snapshot, &actionLabel); e != nil {
 			errDB(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": taskID, "step_index": idx, "step_id": stepID, "title": title, "status": st, "comment": comment, "created_at": created, "decided_at": decided, "assignee_name": name, "assignee_id": assigneeID})
+		var flow Flow
+		if err = json.Unmarshal(snapshot, &flow); err != nil {
+			errDB(w, err)
+			return
+		}
+		var step Step
+		if idx >= 0 && idx < len(flow.Steps) {
+			step = flow.Steps[idx]
+		}
+		actions := stepButtons(step)
+		if st == "in_progress" {
+			filtered := []WorkflowButton{}
+			for _, a := range actions {
+				if a.Effect != "start" {
+					filtered = append(filtered, a)
+				}
+			}
+			actions = filtered
+		}
+		out = append(out, map[string]any{"id": taskID, "step_index": idx, "step_id": stepID, "title": title, "status": st, "comment": comment, "created_at": created, "decided_at": decided, "assignee_name": name, "assignee_id": assigneeID, "actions": actions, "kind": step.Kind, "instructions": step.Instructions, "action_label": actionLabel})
 	}
 	respond(w, 200, out)
 }

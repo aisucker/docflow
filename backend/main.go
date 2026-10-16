@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -230,6 +231,11 @@ func nullableTime(v *time.Time) any {
 	return *v
 }
 func errDB(w http.ResponseWriter, err error) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		fail(w, 409, "Запись с таким кодом уже существует. Откройте её для редактирования или задайте другой код")
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, sql.ErrNoRows) {
 		fail(w, 404, "Не найдено")
 		return
@@ -292,6 +298,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/documents/{id}/start", s.authorize(s.startWorkflow))
 	mux.HandleFunc("GET /api/v1/tasks", s.authorize(s.listTasks))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/decision", s.authorize(s.decideTask))
+	mux.HandleFunc("GET /api/v1/admin/buttons", s.authorize(s.listButtons))
+	mux.HandleFunc("POST /api/v1/admin/buttons", s.authorize(s.saveButton))
+	mux.HandleFunc("PUT /api/v1/admin/buttons/{code}", s.authorize(s.saveButton))
 	mux.HandleFunc("GET /api/v1/workflows", s.authorize(s.listWorkflows))
 	mux.HandleFunc("GET /api/v1/workflows/{id}", s.authorize(s.getWorkflow))
 	mux.HandleFunc("POST /api/v1/admin/workflows", s.authorize(s.createWorkflow))
