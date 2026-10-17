@@ -21,6 +21,17 @@
 .card-field-hint{display:block;color:#7f8c94;font-size:11px;margin-top:5px}
 .card-users{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:9px;padding:12px;margin-top:6px;border:1px solid #dce5e3;background:#fafcfa;max-height:190px;overflow:auto}
 .card-users .checkbox-line{display:flex;align-items:center}
+#document-top-actions{display:flex;align-items:center}
+.route-start-button{white-space:nowrap}
+.task-action-list{display:grid;gap:9px;margin-bottom:18px}
+.task-action-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;background:#fff;border:1px solid #cbded3;border-left:4px solid #31906b;border-radius:4px}
+.task-action-description{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.task-action-description small{width:100%;color:#73838d;font-size:11px}
+.task-action-description strong{font-size:14px;color:#32444c}
+.task-action-buttons{display:flex;gap:8px;flex-shrink:0}
+.task-delegate-note{margin:13px 0 18px}
+.task-dialog-actions{flex-wrap:wrap}
+@media(max-width:700px){.route-start-button{font-size:11px;padding:6px 8px;white-space:normal;line-height:1.15}.task-action-row{align-items:flex-start;flex-direction:column}.task-action-buttons{width:100%}.task-action-buttons .button{flex:1}}
 .admin-list > h2 {font-size:16px;margin-bottom:8px}
 .admin-list > .muted {margin-bottom:18px}
 .stage-buttons + .condition-toggle {display:flex}

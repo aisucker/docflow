@@ -193,6 +193,103 @@ func TestWorkflowIntegration(t *testing.T) {
 		}
 		call(0, "PUT", "/admin/document-types/"+typ, docTypeInput{Name: "Test", Fields: []FieldDef{}, CardFields: card[:0]}, 200)
 	})
+	t.Run("delegate completes and original task closes", func(t *testing.T) {
+		wf := route(Flow{CompletionStatus: "completed", Steps: []Step{step("execute", "task", "all", users[1:2], "complete"), step("review", "approval", "all", users[:1], "approve")}})
+		id := document()
+		start(id, wf)
+		original := task(id, 1, 0)
+		call(2, "POST", "/tasks/"+original+"/delegate", map[string]string{"assignee_id": users[0]}, 403)
+		call(1, "POST", "/tasks/"+original+"/delegate", map[string]string{"assignee_id": users[1]}, 400)
+		delegated := object(call(1, "POST", "/tasks/"+original+"/delegate", map[string]string{"assignee_id": users[2], "comment": "Please execute"}, 201))["id"].(string)
+		call(1, "POST", "/tasks/"+original+"/delegate", map[string]string{"assignee_id": users[0]}, 409)
+		var rows []map[string]any
+		if err := json.Unmarshal(call(2, "GET", "/documents/"+id+"/route", nil, 200), &rows); err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 2 || rows[1]["delegated_from"] != original {
+			t.Fatal("delegated task missing from document route")
+		}
+		if rows[0]["can_delegate"] != false || rows[1]["can_delegate"] != false {
+			t.Fatal("delegation button remained available")
+		}
+		decide(2, delegated, "complete", "Done", 200)
+		decide(1, original, "complete", "Late", 409)
+		if len(tasks(id)) != 3 {
+			t.Fatal("route did not advance after delegate completion")
+		}
+		for _, row := range tasks(id) {
+			if row["id"] == original && row["status"] != "cancelled" {
+				t.Fatal("original task remained active")
+			}
+		}
+		decide(0, task(id, 0, 1), "approve", "", 200)
+		status(id, "completed")
+	})
+	t.Run("delegated completion still waits for other assignees", func(t *testing.T) {
+		wf := route(Flow{CompletionStatus: "completed", Steps: []Step{step("execute", "task", "all", users[:2], "complete")}})
+		id := document()
+		start(id, wf)
+		original := task(id, 1, 0)
+		delegated := object(call(1, "POST", "/tasks/"+original+"/delegate", map[string]string{"assignee_id": users[2]}, 201))["id"].(string)
+		decide(2, delegated, "complete", "Done", 200)
+		status(id, "in_progress")
+		decide(0, task(id, 0, 0), "complete", "Done", 200)
+		status(id, "completed")
+	})
+	t.Run("original completes and delegated task closes", func(t *testing.T) {
+		wf := route(Flow{CompletionStatus: "completed", Steps: []Step{step("execute", "task", "all", users[1:2], "complete"), step("review", "approval", "all", users[:1], "approve")}})
+		id := document()
+		start(id, wf)
+		original := task(id, 1, 0)
+		delegated := object(call(1, "POST", "/tasks/"+original+"/delegate", map[string]string{"assignee_id": users[2]}, 201))["id"].(string)
+		decide(1, original, "complete", "Done", 200)
+		decide(2, delegated, "complete", "Late", 409)
+		if len(tasks(id)) != 3 {
+			t.Fatal("route did not advance after original completion")
+		}
+		for _, row := range tasks(id) {
+			if row["id"] == delegated && row["status"] != "cancelled" {
+				t.Fatal("delegated task remained active")
+			}
+		}
+	})
+	t.Run("concurrent delegation decisions advance once", func(t *testing.T) {
+		wf := route(Flow{CompletionStatus: "completed", Steps: []Step{step("execute", "task", "all", users[1:2], "complete"), step("review", "approval", "all", users[:1], "approve")}})
+		id := document()
+		start(id, wf)
+		original := task(id, 1, 0)
+		delegated := object(call(1, "POST", "/tasks/"+original+"/delegate", map[string]string{"assignee_id": users[2]}, 201))["id"].(string)
+		codes := make(chan int, 2)
+		var wg sync.WaitGroup
+		for i, taskID := range []string{original, delegated} {
+			wg.Add(1)
+			go func(user int, taskID string) {
+				defer wg.Done()
+				r := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/"+taskID+"/decision", strings.NewReader(`{"action_code":"complete"}`))
+				r.Header.Set("Authorization", "Bearer "+srv.makeAccess(users[user]))
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				codes <- w.Code
+			}(i+1, taskID)
+		}
+		wg.Wait()
+		close(codes)
+		ok, conflict := 0, 0
+		for code := range codes {
+			if code == 200 {
+				ok++
+			}
+			if code == 409 {
+				conflict++
+			}
+		}
+		if ok != 1 || conflict != 1 {
+			t.Fatalf("decision results: success=%d conflict=%d", ok, conflict)
+		}
+		if len(tasks(id)) != 3 {
+			t.Fatal("route advanced incorrectly")
+		}
+	})
 	t.Run("catalog permissions and custom actions", func(t *testing.T) {
 		call(1, "GET", "/admin/buttons", nil, 403)
 		call(0, "POST", "/admin/buttons", WorkflowButton{Code: "deliver", Label: "Ответ отправлен", Effect: "complete", Style: "primary", CommentRequired: true, Active: true}, 200)

@@ -305,6 +305,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/documents/{id}/start", s.authorize(s.startWorkflow))
 	mux.HandleFunc("GET /api/v1/tasks", s.authorize(s.listTasks))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/decision", s.authorize(s.decideTask))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/delegate", s.authorize(s.delegateTask))
 	mux.HandleFunc("GET /api/v1/admin/buttons", s.authorize(s.listButtons))
 	mux.HandleFunc("POST /api/v1/admin/buttons", s.authorize(s.saveButton))
 	mux.HandleFunc("PUT /api/v1/admin/buttons/{code}", s.authorize(s.saveButton))

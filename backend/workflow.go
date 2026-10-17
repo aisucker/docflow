@@ -457,9 +457,9 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 		errDB(w, err)
 		return
 	}
-	var userID, taskStatus string
+	var userID, taskStatus, delegatedFrom string
 	var taskStep int
-	err = tx.QueryRow(r.Context(), "SELECT assignee_id,status,step_index FROM workflow_tasks WHERE id=$1 FOR UPDATE", taskID).Scan(&userID, &taskStatus, &taskStep)
+	err = tx.QueryRow(r.Context(), "SELECT assignee_id,status,step_index,coalesce(delegated_from::text,'') FROM workflow_tasks WHERE id=$1 FOR UPDATE", taskID).Scan(&userID, &taskStatus, &taskStep, &delegatedFrom)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -541,6 +541,16 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status=$1,comment=$2,decided_at=now(),action_code=$4,action_label=$5 WHERE id=$3", status, in.Comment, taskID, action.Code, action.Label); err != nil {
+		errDB(w, err)
+		return
+	}
+	// The delegator and delegate represent one obligation. The first decision wins.
+	if delegatedFrom != "" {
+		_, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status='cancelled',decided_at=now(),action_label='Исполнено порученным сотрудником' WHERE id=$1 AND status IN ('pending','in_progress')", delegatedFrom)
+	} else {
+		_, err = tx.Exec(r.Context(), "UPDATE workflow_tasks SET status='cancelled',decided_at=now(),action_label='Исполнено основным исполнителем' WHERE delegated_from=$1 AND status IN ('pending','in_progress')", taskID)
+	}
+	if err != nil {
 		errDB(w, err)
 		return
 	}

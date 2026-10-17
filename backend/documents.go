@@ -398,7 +398,12 @@ func (s *Server) documentRoute(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Документ не найден")
 		return
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.step_index,t.step_id,t.title,t.status,t.comment,t.created_at,t.decided_at,u.full_name,t.assignee_id,wi.definition_snapshot,t.action_label FROM workflow_tasks t JOIN workflow_instances wi ON wi.id=t.instance_id JOIN users u ON t.assignee_id=u.id WHERE t.document_id=$1 ORDER BY t.created_at,t.step_index`, id)
+	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.step_index,t.step_id,t.title,t.status,t.comment,t.created_at,t.decided_at,u.full_name,t.assignee_id,wi.definition_snapshot,t.action_label,
+	 coalesce(t.delegated_from::text,''),coalesce(pu.full_name,''),coalesce(cu.full_name,'')
+	 FROM workflow_tasks t JOIN workflow_instances wi ON wi.id=t.instance_id JOIN users u ON t.assignee_id=u.id
+	 LEFT JOIN workflow_tasks parent ON parent.id=t.delegated_from LEFT JOIN users pu ON pu.id=parent.assignee_id
+	 LEFT JOIN workflow_tasks child ON child.delegated_from=t.id LEFT JOIN users cu ON cu.id=child.assignee_id
+	 WHERE t.document_id=$1 ORDER BY t.created_at,t.step_index,t.id`, id)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -406,12 +411,12 @@ func (s *Server) documentRoute(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var taskID, stepID, title, st, comment, name, assigneeID, actionLabel string
+		var taskID, stepID, title, st, comment, name, assigneeID, actionLabel, delegatedFrom, delegatedBy, delegatedTo string
 		var snapshot []byte
 		var idx int
 		var created time.Time
 		var decided *time.Time
-		if e := rows.Scan(&taskID, &idx, &stepID, &title, &st, &comment, &created, &decided, &name, &assigneeID, &snapshot, &actionLabel); e != nil {
+		if e := rows.Scan(&taskID, &idx, &stepID, &title, &st, &comment, &created, &decided, &name, &assigneeID, &snapshot, &actionLabel, &delegatedFrom, &delegatedBy, &delegatedTo); e != nil {
 			errDB(w, e)
 			return
 		}
@@ -434,7 +439,7 @@ func (s *Server) documentRoute(w http.ResponseWriter, r *http.Request) {
 			}
 			actions = filtered
 		}
-		out = append(out, map[string]any{"id": taskID, "step_index": idx, "step_id": stepID, "title": title, "status": st, "comment": comment, "created_at": created, "decided_at": decided, "assignee_name": name, "assignee_id": assigneeID, "actions": actions, "kind": step.Kind, "instructions": step.Instructions, "action_label": actionLabel, "parallel_group": step.ParallelGroup})
+		out = append(out, map[string]any{"id": taskID, "step_index": idx, "step_id": stepID, "title": title, "status": st, "comment": comment, "created_at": created, "decided_at": decided, "assignee_name": name, "assignee_id": assigneeID, "actions": actions, "kind": step.Kind, "instructions": step.Instructions, "action_label": actionLabel, "parallel_group": step.ParallelGroup, "delegated_from": delegatedFrom, "delegated_by": delegatedBy, "delegated_to": delegatedTo, "can_delegate": delegatedFrom == "" && delegatedTo == "" && (st == "pending" || st == "in_progress")})
 	}
 	respond(w, 200, out)
 }

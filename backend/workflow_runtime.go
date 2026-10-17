@@ -224,7 +224,10 @@ func (s *Server) groupDone(ctx context.Context, tx pgx.Tx, instance string, flow
 	end := parallelEnd(flow.Steps, from)
 	for i := from; i < end; i++ {
 		var pending, finished, total int
-		err := tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status IN ('pending','in_progress')),count(*) FILTER(WHERE status IN ('approved','completed')),count(*) FROM workflow_tasks WHERE instance_id=$1 AND step_index=$2`, instance, i).Scan(&pending, &finished, &total)
+		err := tx.QueryRow(ctx, `SELECT count(*) FILTER(WHERE active),count(*) FILTER(WHERE finished),count(*) FROM (
+		 SELECT bool_or(status IN ('pending','in_progress')) AS active,bool_or(status IN ('approved','completed')) AS finished
+		 FROM workflow_tasks WHERE instance_id=$1 AND step_index=$2 GROUP BY coalesce(delegated_from,id)
+		) obligations`, instance, i).Scan(&pending, &finished, &total)
 		if err != nil {
 			return false, err
 		}
