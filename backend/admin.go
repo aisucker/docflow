@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -30,7 +31,7 @@ func checkFields(defs []FieldDef) string {
 		}
 		used[f.Key] = true
 		switch f.Type {
-		case "string", "text", "number", "boolean", "date", "select":
+		case "string", "text", "number", "boolean", "date", "select", "user":
 		default:
 			return "Неизвестный тип поля"
 		}
@@ -169,7 +170,7 @@ func (s *Server) createPosition(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, map[string]string{"id": id})
 }
 func (s *Server) documentTypes(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(r.Context(), "SELECT id,code,name,fields,active FROM document_types ORDER BY name")
+	rows, err := s.db.Query(r.Context(), "SELECT id,code,name,fields,active,coalesce(default_workflow_key,'') FROM document_types ORDER BY name")
 	if err != nil {
 		errDB(w, err)
 		return
@@ -177,23 +178,33 @@ func (s *Server) documentTypes(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, code, name string
+		var id, code, name, defaultKey string
 		var fields json.RawMessage
 		var active bool
-		if e := rows.Scan(&id, &code, &name, &fields, &active); e != nil {
+		if e := rows.Scan(&id, &code, &name, &fields, &active, &defaultKey); e != nil {
 			errDB(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "code": code, "name": name, "fields": fields, "active": active})
+		out = append(out, map[string]any{"id": id, "code": code, "name": name, "fields": fields, "active": active, "default_workflow_key": defaultKey})
 	}
 	respond(w, 200, out)
 }
 
 type docTypeInput struct {
-	Code   string     `json:"code"`
-	Name   string     `json:"name"`
-	Fields []FieldDef `json:"fields"`
-	Active *bool      `json:"active,omitempty"`
+	Code               string     `json:"code"`
+	Name               string     `json:"name"`
+	Fields             []FieldDef `json:"fields"`
+	Active             *bool      `json:"active,omitempty"`
+	DefaultWorkflowKey string     `json:"default_workflow_key"`
+}
+
+func (s *Server) validDefaultWorkflow(ctx context.Context, key, typeID string) bool {
+	if key == "" {
+		return true
+	}
+	var exists bool
+	err := s.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM workflow_definitions WHERE workflow_key=$1 AND active=true AND (doc_type_id IS NULL OR doc_type_id::text=$2))", key, typeID).Scan(&exists)
+	return err == nil && exists
 }
 
 func (s *Server) createDocumentType(w http.ResponseWriter, r *http.Request) {
@@ -215,9 +226,13 @@ func (s *Server) createDocumentType(w http.ResponseWriter, r *http.Request) {
 	if v.Fields == nil {
 		v.Fields = []FieldDef{}
 	}
+	if !s.validDefaultWorkflow(r.Context(), v.DefaultWorkflowKey, "") {
+		fail(w, 400, "Маршрут по умолчанию не найден или не подходит типу")
+		return
+	}
 	b, _ := json.Marshal(v.Fields)
 	var id string
-	err := s.db.QueryRow(r.Context(), "INSERT INTO document_types(code,name,fields) VALUES($1,$2,$3) RETURNING id", v.Code, v.Name, b).Scan(&id)
+	err := s.db.QueryRow(r.Context(), "INSERT INTO document_types(code,name,fields,default_workflow_key) VALUES($1,$2,$3,$4) RETURNING id", v.Code, v.Name, b, nullableStr(v.DefaultWorkflowKey)).Scan(&id)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -243,12 +258,16 @@ func (s *Server) updateDocumentType(w http.ResponseWriter, r *http.Request) {
 	if v.Fields == nil {
 		v.Fields = []FieldDef{}
 	}
+	if !s.validDefaultWorkflow(r.Context(), v.DefaultWorkflowKey, r.PathValue("id")) {
+		fail(w, 400, "Маршрут по умолчанию не найден или не подходит типу")
+		return
+	}
 	b, _ := json.Marshal(v.Fields)
 	active := true
 	if v.Active != nil {
 		active = *v.Active
 	}
-	tag, err := s.db.Exec(r.Context(), "UPDATE document_types SET name=$1,fields=$2,active=$3 WHERE id=$4", v.Name, b, active, r.PathValue("id"))
+	tag, err := s.db.Exec(r.Context(), "UPDATE document_types SET name=$1,fields=$2,active=$3,default_workflow_key=$5 WHERE id=$4", v.Name, b, active, r.PathValue("id"), nullableStr(v.DefaultWorkflowKey))
 	if err != nil {
 		errDB(w, err)
 		return

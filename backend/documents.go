@@ -63,6 +63,10 @@ func validateValues(defs []FieldDef, fields map[string]any) string {
 			if _, ok := v.(bool); !ok {
 				return "Поле " + key + " должно быть логическим"
 			}
+		case "user":
+			if id, ok := v.(string); !ok || (id != "" && !goodID(id)) {
+				return "Поле " + key + " должно содержать пользователя"
+			}
 		}
 	}
 	for _, f := range defs {
@@ -84,7 +88,23 @@ func (s *Server) checkDocFields(ctx context.Context, typeID string, fields map[s
 	if json.Unmarshal(raw, &defs) != nil {
 		return "Повреждена схема типа документа"
 	}
-	return validateValues(defs, fields)
+	if msg := validateValues(defs, fields); msg != "" {
+		return msg
+	}
+	for _, def := range defs {
+		if def.Type != "user" {
+			continue
+		}
+		id, _ := fields[def.Key].(string)
+		if id == "" {
+			continue
+		}
+		var active bool
+		if err := s.db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", id).Scan(&active); err != nil || !active {
+			return "Пользователь в поле «" + def.Label + "» отсутствует или заблокирован"
+		}
+	}
+	return ""
 }
 func (s *Server) readAllowed(ctx context.Context, docID string, p Principal) bool {
 	if p.Role == "admin" || p.Role == "registrar" {
@@ -156,8 +176,13 @@ func (s *Server) createDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var workflowKey string
+	if err = tx.QueryRow(r.Context(), "SELECT coalesce(default_workflow_key,'') FROM document_types WHERE id=$1", v.TypeID).Scan(&workflowKey); err != nil {
+		errDB(w, err)
+		return
+	}
 	var id string
-	err = tx.QueryRow(r.Context(), `INSERT INTO documents(type_id,title,summary,registration_number,author_id,assignee_id,department_id,due_at,fields) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, v.TypeID, v.Title, v.Summary, nullableStr(v.RegistrationNumber), p.ID, nullableStr(v.AssigneeID), nullableStr(v.DepartmentID), nullableTime(v.DueAt), b).Scan(&id)
+	err = tx.QueryRow(r.Context(), `INSERT INTO documents(type_id,title,summary,registration_number,author_id,assignee_id,department_id,due_at,fields,workflow_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, v.TypeID, v.Title, v.Summary, nullableStr(v.RegistrationNumber), p.ID, nullableStr(v.AssigneeID), nullableStr(v.DepartmentID), nullableTime(v.DueAt), b, nullableStr(workflowKey)).Scan(&id)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -183,17 +208,17 @@ func (s *Server) getDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var v struct {
-		ID, TypeID, TypeName, Title, Summary, Status, AuthorID, AuthorName, RegistrationNumber, AssigneeID, DepartmentID string
-		Fields                                                                                                           json.RawMessage
-		DueAt, RegisteredAt                                                                                              *time.Time
-		CreatedAt, UpdatedAt                                                                                             time.Time
+		ID, TypeID, TypeName, Title, Summary, Status, AuthorID, AuthorName, RegistrationNumber, AssigneeID, DepartmentID, WorkflowKey string
+		Fields                                                                                                                        json.RawMessage
+		DueAt, RegisteredAt                                                                                                           *time.Time
+		CreatedAt, UpdatedAt                                                                                                          time.Time
 	}
-	err := s.db.QueryRow(r.Context(), `SELECT d.id,d.type_id,dt.name,d.title,d.summary,d.status,d.author_id,u.full_name,coalesce(d.registration_number,''),coalesce(d.assignee_id::text,''),coalesce(d.department_id::text,''),d.fields,d.due_at,d.registered_at,d.created_at,d.updated_at FROM documents d JOIN document_types dt ON dt.id=d.type_id JOIN users u ON u.id=d.author_id WHERE d.id=$1 AND d.deleted_at IS NULL`, id).Scan(&v.ID, &v.TypeID, &v.TypeName, &v.Title, &v.Summary, &v.Status, &v.AuthorID, &v.AuthorName, &v.RegistrationNumber, &v.AssigneeID, &v.DepartmentID, &v.Fields, &v.DueAt, &v.RegisteredAt, &v.CreatedAt, &v.UpdatedAt)
+	err := s.db.QueryRow(r.Context(), `SELECT d.id,d.type_id,dt.name,d.title,d.summary,d.status,d.author_id,u.full_name,coalesce(d.registration_number,''),coalesce(d.assignee_id::text,''),coalesce(d.department_id::text,''),d.fields,d.due_at,d.registered_at,d.created_at,d.updated_at,coalesce(d.workflow_key,dt.default_workflow_key,'') FROM documents d JOIN document_types dt ON dt.id=d.type_id JOIN users u ON u.id=d.author_id WHERE d.id=$1 AND d.deleted_at IS NULL`, id).Scan(&v.ID, &v.TypeID, &v.TypeName, &v.Title, &v.Summary, &v.Status, &v.AuthorID, &v.AuthorName, &v.RegistrationNumber, &v.AssigneeID, &v.DepartmentID, &v.Fields, &v.DueAt, &v.RegisteredAt, &v.CreatedAt, &v.UpdatedAt, &v.WorkflowKey)
 	if err != nil {
 		errDB(w, err)
 		return
 	}
-	respond(w, 200, map[string]any{"id": v.ID, "type_id": v.TypeID, "type_name": v.TypeName, "title": v.Title, "summary": v.Summary, "status": v.Status, "author_id": v.AuthorID, "author_name": v.AuthorName, "registration_number": v.RegistrationNumber, "assignee_id": v.AssigneeID, "department_id": v.DepartmentID, "fields": v.Fields, "due_at": v.DueAt, "registered_at": v.RegisteredAt, "created_at": v.CreatedAt, "updated_at": v.UpdatedAt})
+	respond(w, 200, map[string]any{"id": v.ID, "type_id": v.TypeID, "type_name": v.TypeName, "title": v.Title, "summary": v.Summary, "status": v.Status, "author_id": v.AuthorID, "author_name": v.AuthorName, "registration_number": v.RegistrationNumber, "assignee_id": v.AssigneeID, "department_id": v.DepartmentID, "fields": v.Fields, "due_at": v.DueAt, "registered_at": v.RegisteredAt, "created_at": v.CreatedAt, "updated_at": v.UpdatedAt, "workflow_key": v.WorkflowKey})
 }
 func (s *Server) updateDocument(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -358,7 +383,7 @@ func (s *Server) documentRoute(w http.ResponseWriter, r *http.Request) {
 			}
 			actions = filtered
 		}
-		out = append(out, map[string]any{"id": taskID, "step_index": idx, "step_id": stepID, "title": title, "status": st, "comment": comment, "created_at": created, "decided_at": decided, "assignee_name": name, "assignee_id": assigneeID, "actions": actions, "kind": step.Kind, "instructions": step.Instructions, "action_label": actionLabel})
+		out = append(out, map[string]any{"id": taskID, "step_index": idx, "step_id": stepID, "title": title, "status": st, "comment": comment, "created_at": created, "decided_at": decided, "assignee_name": name, "assignee_id": assigneeID, "actions": actions, "kind": step.Kind, "instructions": step.Instructions, "action_label": actionLabel, "parallel_group": step.ParallelGroup})
 	}
 	respond(w, 200, out)
 }

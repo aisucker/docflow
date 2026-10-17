@@ -74,7 +74,12 @@ func TestWorkflowIntegration(t *testing.T) {
 	seq := 0
 	route := func(f Flow) string {
 		seq++
-		return object(call(0, "POST", "/admin/workflows", flowInput{Key: fmt.Sprintf("test_%d", seq), Name: "Test route", Definition: f}, 201))["id"].(string)
+		key := fmt.Sprintf("test_%d", seq)
+		id := object(call(0, "POST", "/admin/workflows", flowInput{Key: key, Name: "Test route", Definition: f}, 201))["id"].(string)
+		if _, err := pool.Exec(context.Background(), "UPDATE document_types SET default_workflow_key=$1 WHERE id=$2", key, typ); err != nil {
+			t.Fatal(err)
+		}
+		return id
 	}
 	document := func() string {
 		return object(call(0, "POST", "/documents", documentInput{TypeID: typ, Title: "Test", Fields: map[string]any{}}, 201))["id"].(string)
@@ -108,6 +113,49 @@ func TestWorkflowIntegration(t *testing.T) {
 	step := func(id, kind, mode string, assignees []string, buttons ...string) Step {
 		return Step{ID: id, Title: id, Kind: kind, Mode: mode, AssigneeIDs: assignees, ButtonCodes: buttons}
 	}
+	t.Run("unassigned document cannot start", func(t *testing.T) {
+		id := document()
+		call(0, "POST", "/documents/"+id+"/start", map[string]string{}, 409)
+	})
+	t.Run("dynamic sources and parallel work", func(t *testing.T) {
+		g := object(call(0, "POST", "/admin/groups", map[string]any{"name": "HR", "active": true, "member_ids": []string{users[2]}}, 200))["id"].(string)
+		if _, err := pool.Exec(context.Background(), `UPDATE document_types SET fields='[{"key":"employee","label":"Employee","type":"user","required":true}]' WHERE id=$1`, typ); err != nil {
+			t.Fatal(err)
+		}
+		sign := step("sign", "approval", "all", nil, "approve")
+		sign.Assignees = []AssigneeSource{{Kind: "author"}}
+		read := step("read", "acknowledgement", "all", nil, "acknowledge")
+		read.Assignees = []AssigneeSource{{Kind: "document_field", ID: "employee"}}
+		read.ParallelGroup = "parallel_after_sign"
+		work := step("work", "task", "all", nil, "complete")
+		work.Assignees = []AssigneeSource{{Kind: "group", ID: g}}
+		work.ParallelGroup = "parallel_after_sign"
+		wf := route(Flow{CompletionStatus: "completed", Steps: []Step{sign, read, work}})
+		id := object(call(0, "POST", "/documents", documentInput{TypeID: typ, Title: "Personnel order", Fields: map[string]any{"employee": users[2]}}, 201))["id"].(string)
+		var detail map[string]any
+		json.Unmarshal(call(0, "GET", "/documents/"+id, nil, 200), &detail)
+		if detail["workflow_key"] == "" {
+			t.Fatal("default route not assigned to document")
+		}
+		start(id, wf)
+		call(0, "PUT", "/admin/groups/"+g, map[string]any{"name": "HR", "active": true, "member_ids": []string{users[1]}}, 200)
+		decide(0, task(id, 0, 0), "approve", "", 200)
+		if len(tasks(id)) != 3 {
+			t.Fatal("parallel steps not activated together")
+		}
+		decide(2, task(id, 2, 1), "acknowledge", "", 200)
+		status(id, "in_progress")
+		decide(1, task(id, 1, 2), "complete", "", 200)
+		status(id, "completed")
+		var plan map[string]any
+		json.Unmarshal(call(0, "GET", "/documents/"+id+"/workflow", nil, 200), &plan)
+		if plan["configured"] != true {
+			t.Fatal("workflow plan unavailable")
+		}
+		if _, err := pool.Exec(context.Background(), "UPDATE document_types SET fields='[]' WHERE id=$1", typ); err != nil {
+			t.Fatal(err)
+		}
+	})
 
 	t.Run("catalog permissions and custom actions", func(t *testing.T) {
 		call(1, "GET", "/admin/buttons", nil, 403)

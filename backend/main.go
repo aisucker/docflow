@@ -89,7 +89,7 @@ func main() {
 	}
 	srv := &http.Server{Addr: env("APP_ADDR", ":8080"), Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	go s.webhookWorker(ctx)
-	log.Printf("DocFlow API listening on %s", srv.Addr)
+	log.Printf("DocJet API listening on %s", srv.Addr)
 	log.Fatal(srv.ListenAndServe())
 }
 func (s *Server) migrate(ctx context.Context) error {
@@ -284,6 +284,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/positions", s.authorize(s.positions))
 	mux.HandleFunc("POST /api/v1/admin/positions", s.authorize(s.createPosition))
 	mux.HandleFunc("GET /api/v1/document-types", s.authorize(s.documentTypes))
+	mux.HandleFunc("GET /api/v1/groups", s.authorize(s.listGroups))
+	mux.HandleFunc("POST /api/v1/admin/groups", s.authorize(s.saveGroup))
+	mux.HandleFunc("PUT /api/v1/admin/groups/{id}", s.authorize(s.saveGroup))
 	mux.HandleFunc("POST /api/v1/admin/document-types", s.authorize(s.createDocumentType))
 	mux.HandleFunc("PUT /api/v1/admin/document-types/{id}", s.authorize(s.updateDocumentType))
 	mux.HandleFunc("GET /api/v1/documents", s.authorize(s.listDocuments))
@@ -295,6 +298,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/documents/{id}/restore", s.authorize(s.restoreDocument))
 	mux.HandleFunc("GET /api/v1/documents/{id}/history", s.authorize(s.documentHistory))
 	mux.HandleFunc("GET /api/v1/documents/{id}/route", s.authorize(s.documentRoute))
+	mux.HandleFunc("GET /api/v1/documents/{id}/workflow", s.authorize(s.documentWorkflow))
 	mux.HandleFunc("POST /api/v1/documents/{id}/start", s.authorize(s.startWorkflow))
 	mux.HandleFunc("GET /api/v1/tasks", s.authorize(s.listTasks))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/decision", s.authorize(s.decideTask))

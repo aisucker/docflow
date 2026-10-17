@@ -24,7 +24,8 @@ Access token действует 15 минут, refresh token — 14 дней с 
 | DELETE | `/documents/{id}` | Мягкое удаление, только admin |
 | GET | `/documents/{id}/history` | История событий |
 | GET | `/documents/{id}/route` | Задачи, этапы и решения |
-| POST | `/documents/{id}/start` | `{ "workflow_id":"uuid" }` |
+| GET | `/documents/{id}/workflow` | Назначенный маршрут или снимок запущенной версии |
+| POST | `/documents/{id}/start` | `{}` — запускает маршрут, заранее назначенный типу документа |
 | GET | `/tasks?status=pending` | Мои задачи |
 | POST | `/tasks/{id}/decision` | `{ "decision":"approve\|reject\|return", "comment":"..." }` |
 
@@ -51,7 +52,9 @@ Access token действует 15 минут, refresh token — 14 дней с 
 |---|---|---|
 | GET | `/document-types`, `/users`, `/departments`, `/positions`, `/workflows`, `/templates` | Списки |
 | GET | `/workflows/{id}` | Определение маршрута |
-| POST, PUT | `/admin/document-types` / `/admin/document-types/{id}` | Управление схемой полей |
+| POST, PUT | `/admin/document-types` / `/admin/document-types/{id}` | Схема полей, включая тип `user`, и `default_workflow_key` |
+| GET | `/groups` | Группы и состав участников |
+| POST, PUT | `/admin/groups` / `/admin/groups/{id}` | Создание и правка группы исполнителей |
 | POST, PATCH | `/admin/users` / `/admin/users/{id}` | Создание и изменение учётных записей |
 | POST | `/admin/departments`, `/admin/positions` | Добавление подразделений и должностей |
 | POST, PUT | `/admin/workflows` / `/admin/workflows/{id}` | Создание и версионирование схем |
