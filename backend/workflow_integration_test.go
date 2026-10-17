@@ -71,6 +71,31 @@ func TestWorkflowIntegration(t *testing.T) {
 		}
 		return v
 	}
+	t.Run("personal profile and settings", func(t *testing.T) {
+		profile := object(call(1, "GET", "/me", nil, 200))
+		if profile["full_name"] != "test1@local" || profile["preferences"].(map[string]any)["start_page"] != "documents" {
+			t.Fatalf("unexpected initial profile: %v", profile)
+		}
+		updated := object(call(1, "PATCH", "/me", map[string]string{"full_name": "Тестовый сотрудник"}, 200))
+		if updated["full_name"] != "Тестовый сотрудник" {
+			t.Fatalf("name was not saved: %v", updated)
+		}
+		call(1, "PUT", "/me/preferences", map[string]any{"compact": true, "start_page": "tasks"}, 200)
+		profile = object(call(1, "GET", "/me", nil, 200))
+		preferences := profile["preferences"].(map[string]any)
+		if preferences["compact"] != true || preferences["start_page"] != "tasks" {
+			t.Fatalf("settings were not saved: %v", preferences)
+		}
+		if object(call(2, "GET", "/me", nil, 200))["full_name"] != "test2@local" {
+			t.Fatal("profile update affected another employee")
+		}
+		call(1, "PUT", "/me/preferences", map[string]any{"compact": false, "start_page": "admin"}, 400)
+		call(1, "PATCH", "/me", map[string]string{"full_name": " "}, 400)
+		counts := object(call(1, "GET", "/me/overview", nil, 200))
+		if counts["pending_tasks"] != float64(0) || counts["my_documents"] != float64(0) {
+			t.Fatalf("unexpected initial overview: %v", counts)
+		}
+	})
 	seq := 0
 	route := func(f Flow) string {
 		seq++

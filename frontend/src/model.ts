@@ -1,4 +1,5 @@
-export type Identity = {id:string;email:string;full_name:string;role:string};
+export type ProfilePreferences = {compact:boolean;start_page:'documents'|'tasks'|'profile'};
+export type Identity = {id:string;email:string;full_name:string;role:string;department_name:string;position_name:string;joined_at:string;preferences:ProfilePreferences};
 export type Session = {access_token:string;refresh_token:string;expires_in:number};
 export type FieldDef = {key:string;label:string;type:'string'|'text'|'number'|'boolean'|'date'|'select'|'user'|'users';required:boolean;options?:string[];placeholder?:string;hint?:string;section?:string;full_width?:boolean};
 export type CardField = {key:'title'|'summary'|'registration_number'|'assignee_id'|'department_id'|'due_at';label:string;visible:boolean;required:boolean;placeholder?:string};
@@ -16,7 +17,7 @@ export type Department = {id:string;name:string;parent_id:string};
 export type Position = {id:string;name:string};
 export type WorkflowGroup = {id:string;name:string;active:boolean;member_ids:string[]};
 export type Document = {id:string;type_id:string;type_name:string;title:string;summary:string;status:string;registration_number:string;author_id:string;author_name:string;assignee_id?:string;department_id?:string;workflow_key?:string;due_at:string|null;registered_at?:string|null;fields?:Record<string,unknown>;created_at:string;updated_at:string};
-export type Task = {id:string;document_id:string;document_title:string;step_index:number;title:string;status:string;created_at:string};
+export type Task = {id:string;document_id:string;document_title:string;step_index:number;title:string;status:string;created_at:string;due_at:string|null};
 export type WorkflowButton = {code:string;label:string;effect:'complete'|'start'|'return'|'reject';style:'primary'|'subtle'|'danger-outline';comment_required:boolean;active:boolean};
 export type RouteTask = {actions:WorkflowButton[];kind:string;instructions:string;action_label:string;parallel_group?:string;id:string;step_index:number;step_id:string;title:string;status:string;assignee_name:string;assignee_id:string;comment:string;created_at:string;decided_at:string|null;delegated_from:string;delegated_by:string;delegated_to:string;can_delegate:boolean};
 export type Event = {id:number;kind:string;actor_name:string;occurred_at:string;detail:Record<string,unknown>};

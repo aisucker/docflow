@@ -159,4 +159,3 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.db.Exec(r.Context(), "UPDATE refresh_sessions SET revoked_at=now() WHERE token_hash=$1", tokenHash(in.Token))
 	w.WriteHeader(204)
 }
-func (s *Server) profile(w http.ResponseWriter, r *http.Request) { respond(w, 200, me(r)) }

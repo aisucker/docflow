@@ -406,7 +406,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = "pending"
 	}
-	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.document_id,d.title,t.step_index,t.title,t.status,t.created_at,u.full_name FROM workflow_tasks t JOIN documents d ON d.id=t.document_id JOIN users u ON t.assignee_id=u.id WHERE t.assignee_id=$1 AND (t.status=$2 OR ($2='pending' AND t.status='in_progress')) AND d.deleted_at IS NULL ORDER BY t.created_at DESC LIMIT 100`, p.ID, status)
+	rows, err := s.db.Query(r.Context(), `SELECT t.id,t.document_id,d.title,t.step_index,t.title,t.status,t.created_at,u.full_name,d.due_at FROM workflow_tasks t JOIN documents d ON d.id=t.document_id JOIN users u ON t.assignee_id=u.id WHERE t.assignee_id=$1 AND (t.status=$2 OR ($2='pending' AND t.status='in_progress')) AND d.deleted_at IS NULL ORDER BY d.due_at ASC NULLS LAST,t.created_at DESC LIMIT 100`, p.ID, status)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -417,11 +417,12 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 		var id, docID, docTitle, taskTitle, st, user string
 		var idx int
 		var created time.Time
-		if e := rows.Scan(&id, &docID, &docTitle, &idx, &taskTitle, &st, &created, &user); e != nil {
+		var due *time.Time
+		if e := rows.Scan(&id, &docID, &docTitle, &idx, &taskTitle, &st, &created, &user, &due); e != nil {
 			errDB(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "document_id": docID, "document_title": docTitle, "step_index": idx, "title": taskTitle, "status": st, "created_at": created, "assignee_name": user})
+		out = append(out, map[string]any{"id": id, "document_id": docID, "document_title": docTitle, "step_index": idx, "title": taskTitle, "status": st, "created_at": created, "due_at": due, "assignee_name": user})
 	}
 	respond(w, 200, out)
 }
