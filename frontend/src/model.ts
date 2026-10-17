@@ -1,7 +1,16 @@
 export type Identity = {id:string;email:string;full_name:string;role:string};
 export type Session = {access_token:string;refresh_token:string;expires_in:number};
-export type FieldDef = {key:string;label:string;type:'string'|'text'|'number'|'boolean'|'date'|'select'|'user';required:boolean;options?:string[]};
-export type DocType = {id:string;code:string;name:string;fields:FieldDef[];active:boolean;default_workflow_key:string};
+export type FieldDef = {key:string;label:string;type:'string'|'text'|'number'|'boolean'|'date'|'select'|'user'|'users';required:boolean;options?:string[];placeholder?:string;hint?:string;section?:string;full_width?:boolean};
+export type CardField = {key:'title'|'summary'|'registration_number'|'assignee_id'|'department_id'|'due_at';label:string;visible:boolean;required:boolean;placeholder?:string};
+export const defaultCardFields:CardField[]=[
+ {key:'registration_number',label:'Регистрационный номер',visible:true,required:false,placeholder:'При необходимости'},
+ {key:'title',label:'Название документа',visible:true,required:true},
+ {key:'summary',label:'Краткое содержание',visible:true,required:false},
+ {key:'assignee_id',label:'Ответственный',visible:true,required:false},
+ {key:'department_id',label:'Подразделение',visible:true,required:false},
+ {key:'due_at',label:'Срок исполнения',visible:true,required:false}
+];
+export type DocType = {id:string;code:string;name:string;fields:FieldDef[];card_fields:CardField[];active:boolean;default_workflow_key:string};
 export type User = Identity & {active:boolean;department_id:string;position_id:string};
 export type Department = {id:string;name:string;parent_id:string};
 export type Position = {id:string;name:string};

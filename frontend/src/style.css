@@ -11,6 +11,16 @@
 .status.in_progress {background:#e9eff8;color:#365e88}
 .timeline-dot.completed {background:#538567}
 .admin-editor fieldset > .checkbox-line {display:flex;margin:16px 0;gap:8px}
+.card-field-heading,.card-field-options{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.card-field-heading strong{font-size:13px;color:#43505b}
+.card-field-heading button{border:0;background:transparent;color:#627b89;padding:4px 8px;cursor:pointer}
+.card-field-heading button:disabled{opacity:.3;cursor:default}
+.card-field-options{justify-content:flex-start;margin-top:13px;flex-wrap:wrap}
+.card-field-options .link-danger{margin-left:auto}
+.card-extra.full{grid-column:1/-1}
+.card-field-hint{display:block;color:#7f8c94;font-size:11px;margin-top:5px}
+.card-users{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:9px;padding:12px;margin-top:6px;border:1px solid #dce5e3;background:#fafcfa;max-height:190px;overflow:auto}
+.card-users .checkbox-line{display:flex;align-items:center}
 .admin-list > h2 {font-size:16px;margin-bottom:8px}
 .admin-list > .muted {margin-bottom:18px}
 .stage-buttons + .condition-toggle {display:flex}

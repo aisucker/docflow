@@ -50,11 +50,23 @@ func (s *Server) resolveAssignees(ctx context.Context, tx pgx.Tx, step Step, doc
 		case "user":
 			add(src.ID)
 		case "document_field":
-			id, _ := fields[src.ID].(string)
-			if id == "" {
+			value := fields[src.ID]
+			found := false
+			if id, ok := value.(string); ok && id != "" {
+				add(id)
+				found = true
+			}
+			if values, ok := value.([]any); ok {
+				for _, item := range values {
+					if id, ok := item.(string); ok && id != "" {
+						add(id)
+						found = true
+					}
+				}
+			}
+			if !found {
 				return nil, routeError("В документе не заполнено поле пользователя «" + src.ID + "» для этапа «" + step.Title + "»")
 			}
-			add(id)
 		case "author":
 			var id string
 			if err := tx.QueryRow(ctx, "SELECT author_id FROM documents WHERE id=$1", docID).Scan(&id); err != nil {

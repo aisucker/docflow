@@ -157,6 +157,42 @@ func TestWorkflowIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("configurable card and multiple user assignees", func(t *testing.T) {
+		card := []CardField{
+			{Key: "title", Label: "Заголовок", Visible: true, Required: true},
+			{Key: "summary", Label: "Описание", Visible: true, Required: true},
+			{Key: "registration_number", Label: "Номер", Visible: false},
+			{Key: "assignee_id", Label: "Ответственный", Visible: false},
+			{Key: "department_id", Label: "Отдел", Visible: false},
+			{Key: "due_at", Label: "Срок", Visible: false},
+		}
+		fields := []FieldDef{{Key: "reviewers", Label: "Ознакомить", Type: "users", Required: true}}
+		call(0, "PUT", "/admin/document-types/"+typ, docTypeInput{Name: "Test", Fields: fields, CardFields: card}, 200)
+		var catalog []map[string]any
+		if err := json.Unmarshal(call(0, "GET", "/document-types", nil, 200), &catalog); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, item := range catalog {
+			if item["id"] == typ {
+				found = len(item["card_fields"].([]any)) == 6
+			}
+		}
+		if !found {
+			t.Fatal("card configuration was not persisted")
+		}
+		input := documentInput{TypeID: typ, Title: "Order", Fields: map[string]any{"reviewers": []any{users[1], users[2]}}}
+		call(0, "POST", "/documents", input, 400)
+		input.Summary = "For review"
+		id := object(call(0, "POST", "/documents", input, 201))["id"].(string)
+		flow := Flow{Steps: []Step{{ID: "review", Title: "Read", Kind: "acknowledgement", Mode: "all", Assignees: []AssigneeSource{{Kind: "document_field", ID: "reviewers"}}, ButtonCodes: []string{"acknowledge"}}}}
+		wf := route(flow)
+		start(id, wf)
+		if len(tasks(id)) != 2 {
+			t.Fatal("multiple users were not assigned to the stage")
+		}
+		call(0, "PUT", "/admin/document-types/"+typ, docTypeInput{Name: "Test", Fields: []FieldDef{}, CardFields: card[:0]}, 200)
+	})
 	t.Run("catalog permissions and custom actions", func(t *testing.T) {
 		call(1, "GET", "/admin/buttons", nil, 403)
 		call(0, "POST", "/admin/buttons", WorkflowButton{Code: "deliver", Label: "Ответ отправлен", Effect: "complete", Style: "primary", CommentRequired: true, Active: true}, 200)

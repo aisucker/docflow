@@ -67,11 +67,24 @@ func validateValues(defs []FieldDef, fields map[string]any) string {
 			if id, ok := v.(string); !ok || (id != "" && !goodID(id)) {
 				return "Поле " + key + " должно содержать пользователя"
 			}
+		case "users":
+			ids, ok := v.([]any)
+			if !ok || len(ids) > 200 {
+				return "Поле " + key + " должно содержать список пользователей"
+			}
+			seen := map[string]bool{}
+			for _, value := range ids {
+				id, ok := value.(string)
+				if !ok || !goodID(id) || seen[id] {
+					return "Некорректный или повторяющийся пользователь в поле " + key
+				}
+				seen[id] = true
+			}
 		}
 	}
 	for _, f := range defs {
 		v, ok := fields[f.Key]
-		if f.Required && (!ok || v == nil || v == "") {
+		if f.Required && (!ok || v == nil || v == "" || (f.Type == "users" && len(v.([]any)) == 0)) {
 			return "Обязательное поле: " + f.Label
 		}
 	}
@@ -92,16 +105,45 @@ func (s *Server) checkDocFields(ctx context.Context, typeID string, fields map[s
 		return msg
 	}
 	for _, def := range defs {
-		if def.Type != "user" {
+		if def.Type != "user" && def.Type != "users" {
 			continue
 		}
-		id, _ := fields[def.Key].(string)
-		if id == "" {
-			continue
+		ids := []string{}
+		if def.Type == "user" {
+			if id, ok := fields[def.Key].(string); ok && id != "" {
+				ids = append(ids, id)
+			}
 		}
-		var active bool
-		if err := s.db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", id).Scan(&active); err != nil || !active {
-			return "Пользователь в поле «" + def.Label + "» отсутствует или заблокирован"
+		if def.Type == "users" {
+			if values, ok := fields[def.Key].([]any); ok {
+				for _, value := range values {
+					ids = append(ids, value.(string))
+				}
+			}
+		}
+		for _, id := range ids {
+			var active bool
+			if err := s.db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", id).Scan(&active); err != nil || !active {
+				return "Пользователь в поле «" + def.Label + "» отсутствует или заблокирован"
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Server) checkCardValues(ctx context.Context, v documentInput) string {
+	var raw []byte
+	if err := s.db.QueryRow(ctx, "SELECT card_fields FROM document_types WHERE id=$1", v.TypeID).Scan(&raw); err != nil {
+		return "Тип документа не найден"
+	}
+	var fields []CardField
+	if json.Unmarshal(raw, &fields) != nil {
+		return "Повреждена настройка карточки"
+	}
+	values := map[string]bool{"title": strings.TrimSpace(v.Title) != "", "summary": strings.TrimSpace(v.Summary) != "", "registration_number": strings.TrimSpace(v.RegistrationNumber) != "", "assignee_id": v.AssigneeID != "", "department_id": v.DepartmentID != "", "due_at": v.DueAt != nil}
+	for _, field := range fields {
+		if field.Visible && field.Required && !values[field.Key] {
+			return "Обязательное поле: " + field.Label
 		}
 	}
 	return ""
@@ -165,6 +207,10 @@ func (s *Server) createDocument(w http.ResponseWriter, r *http.Request) {
 		v.Fields = map[string]any{}
 	}
 	if e := s.checkDocFields(r.Context(), v.TypeID, v.Fields); e != "" {
+		fail(w, 400, e)
+		return
+	}
+	if e := s.checkCardValues(r.Context(), v); e != "" {
 		fail(w, 400, e)
 		return
 	}
@@ -255,6 +301,11 @@ func (s *Server) updateDocument(w http.ResponseWriter, r *http.Request) {
 		v.Fields = map[string]any{}
 	}
 	if msg := s.checkDocFields(r.Context(), typeID, v.Fields); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
+	v.TypeID = typeID
+	if msg := s.checkCardValues(r.Context(), v); msg != "" {
 		fail(w, 400, msg)
 		return
 	}

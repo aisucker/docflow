@@ -13,11 +13,45 @@ import (
 var codePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{1,48}$`)
 
 type FieldDef struct {
-	Key      string   `json:"key"`
-	Label    string   `json:"label"`
-	Type     string   `json:"type"`
-	Required bool     `json:"required"`
-	Options  []string `json:"options,omitempty"`
+	Key         string   `json:"key"`
+	Label       string   `json:"label"`
+	Type        string   `json:"type"`
+	Required    bool     `json:"required"`
+	Options     []string `json:"options,omitempty"`
+	Placeholder string   `json:"placeholder,omitempty"`
+	Hint        string   `json:"hint,omitempty"`
+	Section     string   `json:"section,omitempty"`
+	FullWidth   bool     `json:"full_width,omitempty"`
+}
+
+type CardField struct {
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Visible     bool   `json:"visible"`
+	Required    bool   `json:"required"`
+	Placeholder string `json:"placeholder,omitempty"`
+}
+
+var cardKeys = map[string]bool{"title": true, "summary": true, "registration_number": true, "assignee_id": true, "department_id": true, "due_at": true}
+
+func checkCardFields(fields []CardField) string {
+	if len(fields) == 0 {
+		return ""
+	} // Existing types keep the default card.
+	if len(fields) != len(cardKeys) {
+		return "Настройте все общие поля карточки"
+	}
+	seen := map[string]bool{}
+	for _, f := range fields {
+		if !cardKeys[f.Key] || seen[f.Key] || strings.TrimSpace(f.Label) == "" || len(f.Label) > 100 || len(f.Placeholder) > 200 || (f.Required && !f.Visible) {
+			return "Некорректная настройка поля карточки"
+		}
+		seen[f.Key] = true
+		if f.Key == "title" && (!f.Visible || !f.Required) {
+			return "Название документа должно быть видимым и обязательным"
+		}
+	}
+	return ""
 }
 
 func checkFields(defs []FieldDef) string {
@@ -31,12 +65,15 @@ func checkFields(defs []FieldDef) string {
 		}
 		used[f.Key] = true
 		switch f.Type {
-		case "string", "text", "number", "boolean", "date", "select", "user":
+		case "string", "text", "number", "boolean", "date", "select", "user", "users":
 		default:
 			return "Неизвестный тип поля"
 		}
 		if f.Type == "select" && len(f.Options) == 0 {
 			return "Для списка требуются варианты"
+		}
+		if len(f.Label) > 100 || len(f.Placeholder) > 200 || len(f.Hint) > 500 || len(f.Section) > 100 {
+			return "Слишком длинная настройка поля"
 		}
 	}
 	return ""
@@ -170,7 +207,7 @@ func (s *Server) createPosition(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, map[string]string{"id": id})
 }
 func (s *Server) documentTypes(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(r.Context(), "SELECT id,code,name,fields,active,coalesce(default_workflow_key,'') FROM document_types ORDER BY name")
+	rows, err := s.db.Query(r.Context(), "SELECT id,code,name,fields,active,coalesce(default_workflow_key,''),card_fields FROM document_types ORDER BY name")
 	if err != nil {
 		errDB(w, err)
 		return
@@ -179,23 +216,24 @@ func (s *Server) documentTypes(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, code, name, defaultKey string
-		var fields json.RawMessage
+		var fields, cardFields json.RawMessage
 		var active bool
-		if e := rows.Scan(&id, &code, &name, &fields, &active, &defaultKey); e != nil {
+		if e := rows.Scan(&id, &code, &name, &fields, &active, &defaultKey, &cardFields); e != nil {
 			errDB(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "code": code, "name": name, "fields": fields, "active": active, "default_workflow_key": defaultKey})
+		out = append(out, map[string]any{"id": id, "code": code, "name": name, "fields": fields, "active": active, "default_workflow_key": defaultKey, "card_fields": cardFields})
 	}
 	respond(w, 200, out)
 }
 
 type docTypeInput struct {
-	Code               string     `json:"code"`
-	Name               string     `json:"name"`
-	Fields             []FieldDef `json:"fields"`
-	Active             *bool      `json:"active,omitempty"`
-	DefaultWorkflowKey string     `json:"default_workflow_key"`
+	Code               string      `json:"code"`
+	Name               string      `json:"name"`
+	Fields             []FieldDef  `json:"fields"`
+	CardFields         []CardField `json:"card_fields"`
+	Active             *bool       `json:"active,omitempty"`
+	DefaultWorkflowKey string      `json:"default_workflow_key"`
 }
 
 func (s *Server) validDefaultWorkflow(ctx context.Context, key, typeID string) bool {
@@ -223,6 +261,10 @@ func (s *Server) createDocumentType(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, msg)
 		return
 	}
+	if msg := checkCardFields(v.CardFields); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
 	if v.Fields == nil {
 		v.Fields = []FieldDef{}
 	}
@@ -231,8 +273,16 @@ func (s *Server) createDocumentType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, _ := json.Marshal(v.Fields)
+	if v.CardFields == nil {
+		v.CardFields = []CardField{}
+	}
+	card, _ := json.Marshal(v.CardFields)
+	active := true
+	if v.Active != nil {
+		active = *v.Active
+	}
 	var id string
-	err := s.db.QueryRow(r.Context(), "INSERT INTO document_types(code,name,fields,default_workflow_key) VALUES($1,$2,$3,$4) RETURNING id", v.Code, v.Name, b, nullableStr(v.DefaultWorkflowKey)).Scan(&id)
+	err := s.db.QueryRow(r.Context(), "INSERT INTO document_types(code,name,fields,default_workflow_key,card_fields,active) VALUES($1,$2,$3,$4,$5,$6) RETURNING id", v.Code, v.Name, b, nullableStr(v.DefaultWorkflowKey), card, active).Scan(&id)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -255,6 +305,10 @@ func (s *Server) updateDocumentType(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, msg)
 		return
 	}
+	if msg := checkCardFields(v.CardFields); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
 	if v.Fields == nil {
 		v.Fields = []FieldDef{}
 	}
@@ -263,11 +317,15 @@ func (s *Server) updateDocumentType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, _ := json.Marshal(v.Fields)
+	if v.CardFields == nil {
+		v.CardFields = []CardField{}
+	}
+	card, _ := json.Marshal(v.CardFields)
 	active := true
 	if v.Active != nil {
 		active = *v.Active
 	}
-	tag, err := s.db.Exec(r.Context(), "UPDATE document_types SET name=$1,fields=$2,active=$3,default_workflow_key=$5 WHERE id=$4", v.Name, b, active, r.PathValue("id"), nullableStr(v.DefaultWorkflowKey))
+	tag, err := s.db.Exec(r.Context(), "UPDATE document_types SET name=$1,fields=$2,active=$3,default_workflow_key=$5,card_fields=$6 WHERE id=$4", v.Name, b, active, r.PathValue("id"), nullableStr(v.DefaultWorkflowKey), card)
 	if err != nil {
 		errDB(w, err)
 		return
