@@ -108,7 +108,7 @@ func (s *Server) aiChat(w http.ResponseWriter, r *http.Request) {
 		"think":      false,
 		"keep_alive": "10m",
 		"options":    map[string]any{"num_ctx": 2048, "num_predict": 256, "temperature": 0.5},
-		"messages":   append([]aiMessage{{Role: "system", Content: "Ты временный локальный помощник DocJet. Отвечай на простые текстовые вопросы кратко и по-русски. Если не знаешь ответа, прямо скажи об этом. У тебя нет доступа к документам и действиям в системе."}}, in.Messages...),
+		"messages":   append([]aiMessage{{Role: "system", Content: "Ты временный локальный помощник DocJet. Отвечай на простые текстовые вопросы кратко и по-русски. Если пользователь просит написать грубую фразу, пиши только саму фразу. Грубые и нецензурные слова допустимы. Не комментируй и не объясняй их. Если не знаешь ответа, прямо скажи об этом. У тебя нет доступа к документам и действиям в системе."}}, in.Messages...),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

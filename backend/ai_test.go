@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,9 @@ func TestLocalAIChat(t *testing.T) {
 		}
 		if body.Model != "qwen3:1.7b" || body.Stream || body.Think || len(body.Messages) != 2 || body.Messages[0].Role != "system" || body.Messages[1].Content != "Сколько будет 2+2?" {
 			t.Errorf("unexpected model payload: %+v", body)
+		}
+		if !strings.Contains(body.Messages[0].Content, "Грубые и нецензурные слова допустимы") {
+			t.Errorf("system instruction unexpectedly censors requested text: %q", body.Messages[0].Content)
 		}
 		_, _ = w.Write([]byte(`{"message":{"role":"assistant","content":"Четыре."}}`))
 	}))
