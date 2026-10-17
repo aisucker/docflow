@@ -2,6 +2,7 @@ import {useCallback,useEffect,useState,type FormEvent,type ReactNode} from 'reac
 import {date,readSession,request,statusName,writeSession,type Department,type DocType,type Document,type Identity,type Task,type Template,type User,type Workflow} from './model';
 import Admin from './Admin';
 import DocumentPage from './DocumentPage';
+import LocalAIChat from './LocalAIChat';
 
 type Section = 'documents'|'tasks'|'admin';
 const J:[string,string][]=[['all','Все документы'],['mine','Мои документы'],['inbox','На исполнении'],['draft','Черновики'],['incoming','Входящие'],['outgoing','Исходящие'],['internal','Внутренние'],['order','Приказы'],['contract','Договоры']];
@@ -52,6 +53,7 @@ export default function App(){const [user,setUser]=useState<Identity|null>(null)
   </main>
   {mobileNav&&<button className="mobile-backdrop" aria-label="Закрыть меню" onClick={()=>setMobileNav(false)}/>}
   <aside className={"sidebar "+(mobileNav?"mobile-open":"")}><div className="brand"><div className="brand-mark">J</div><span>DocJet</span></div><div className="side-scroll"><p className="nav-heading">Мои задачи</p><button className={'nav-item '+(section==='tasks'?'active':'')} onClick={()=>{leaveDocument();setSection('tasks');setMobileNav(false)}}><Icon name="check"/>На исполнении</button><p className="nav-heading">Журналы документов</p>{J.map(([id,label])=><button key={id} className={'nav-item '+(section==='documents'&&journal===id?'active':'')} onClick={()=>gotoJournal(id)}><Icon name={id==='inbox'?'check':id==='draft'?'folder':'file'}/>{label}</button>)}{user.role==='admin'&&<><p className="nav-heading">Администрирование</p>{([['types','Типы документов','file'],['routes','Маршруты','route'],['groups','Группы исполнителей','users'],['buttons','Кнопки этапов','check'],['users','Пользователи','users'],['departments','Подразделения','folder'],['templates','Шаблоны','file'],['integrations','Интеграции','settings'],['trash','Корзина','folder']] as const).map(([id,label,ico])=><button key={id} className={'nav-item '+(section==='admin'&&adminPage===id?'active':'')} onClick={()=>{leaveDocument();setSection('admin');setAdminPage(id);setMobileNav(false)}}><Icon name={ico}/>{label}</button>)}</>}</div><div className="side-footer">DocJet · v0.1</div></aside>
+  <LocalAIChat/>
   {newDocument&&<DocumentEditor types={types} users={users} departments={departments} onClose={()=>setNewDocument(false)} saved={id=>{setNewDocument(false);reload();openDocument(id)}} notify={setError}/>}
  </div>
 }

@@ -25,6 +25,8 @@ Access token действует 15 минут, refresh token — 14 дней с 
 | GET | `/documents/{id}/history` | История событий |
 | GET | `/documents/{id}/route` | Задачи, этапы и решения |
 | GET | `/documents/{id}/workflow` | Назначенный маршрут или снимок запущенной версии |
+| GET | `/ai/status` | Готовность локальной модели |
+| POST | `/ai/chat` | `{ "messages": [{ "role": "user", "content": "Привет" }] }` — короткий ответ локальной модели |
 | POST | `/documents/{id}/start` | `{}` — запускает маршрут, заранее назначенный типу документа |
 | GET | `/tasks?status=pending` | Мои задачи |
 | POST | `/tasks/{id}/decision` | `{ "decision":"approve\|reject\|return", "comment":"..." }` |

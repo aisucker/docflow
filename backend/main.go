@@ -32,6 +32,7 @@ type Server struct {
 	secret  []byte
 	storage string
 	origin  string
+	aiURL   string
 }
 type Principal struct {
 	ID    string `json:"id"`
@@ -276,6 +277,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
 	mux.HandleFunc("GET /api/v1/me", s.authorize(s.profile))
+	mux.HandleFunc("GET /api/v1/ai/status", s.authorize(s.aiStatus))
+	mux.HandleFunc("POST /api/v1/ai/chat", s.authorize(s.aiChat))
 	mux.HandleFunc("GET /api/v1/users", s.authorize(s.users))
 	mux.HandleFunc("POST /api/v1/admin/users", s.authorize(s.createUser))
 	mux.HandleFunc("PATCH /api/v1/admin/users/{id}", s.authorize(s.updateUser))
