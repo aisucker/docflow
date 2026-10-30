@@ -69,7 +69,7 @@ func validateFlow(f Flow) string {
 			previousGroup = step.ParallelGroup
 		}
 		switch step.Kind {
-		case "", "approval", "task", "acknowledgement", "registration":
+		case "", "approval", "task", "acknowledgement", "registration", "signing":
 		default:
 			return "Неизвестный тип этапа"
 		}
@@ -156,8 +156,12 @@ func conditionMatches(c *Condition, doc map[string]any) bool {
 	}
 	return false
 }
-func (s *Server) validateAssignees(ctx context.Context, flow Flow) string {
-	if msg := s.validateSourceRefs(ctx, flow); msg != "" {
+func (s *Server) validateAssignees(ctx context.Context, flow Flow, queries ...rowQuerier) string {
+	var db rowQuerier = s.db
+	if len(queries) > 0 {
+		db = queries[0]
+	}
+	if msg := s.validateSourceRefs(ctx, flow, db); msg != "" {
 		return msg
 	}
 	ids := map[string]bool{}
@@ -168,7 +172,7 @@ func (s *Server) validateAssignees(ctx context.Context, flow Flow) string {
 	}
 	for id := range ids {
 		var active bool
-		if err := s.db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", id).Scan(&active); err != nil || !active {
+		if err := db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", id).Scan(&active); err != nil || !active {
 			return "Исполнитель отсутствует или заблокирован: " + id
 		}
 	}
@@ -360,8 +364,29 @@ func (s *Server) startWorkflow(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Повреждено определение маршрута")
 		return
 	}
-	if msg := s.validateAssignees(r.Context(), f); msg != "" {
+	for _, step := range f.Steps {
+		if step.Kind == "registration" {
+			var configured bool
+			if err = tx.QueryRow(r.Context(), "SELECT coalesce(d.registration_journal_id,dt.registration_journal_id) IS NOT NULL FROM documents d JOIN document_types dt ON dt.id=d.type_id WHERE d.id=$1", docID).Scan(&configured); err != nil {
+				errDB(w, err)
+				return
+			}
+			if !configured {
+				fail(w, 409, "Для маршрута с регистрацией выберите регистрационный журнал в типе документа")
+				return
+			}
+		}
+	}
+	if msg := s.validateAssignees(r.Context(), f, tx); msg != "" {
 		fail(w, 400, msg)
+		return
+	}
+	if _, err = tx.Exec(r.Context(), "UPDATE documents d SET project_journal_id=coalesce(d.project_journal_id,dt.project_journal_id),registration_journal_id=coalesce(d.registration_journal_id,dt.registration_journal_id) FROM document_types dt WHERE d.id=$1 AND dt.id=d.type_id", docID); err != nil {
+		errDB(w, err)
+		return
+	}
+	if err = s.assignJournalNumber(r.Context(), tx, docID, p.ID, "project"); err != nil {
+		journalError(w, err)
 		return
 	}
 	var instance string
@@ -429,9 +454,11 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 	p := me(r)
 	var in struct {
-		Decision   string `json:"decision"`
-		ActionCode string `json:"action_code"`
-		Comment    string `json:"comment"`
+		Decision    string `json:"decision"`
+		ChallengeID string `json:"challenge_id"`
+		CMS         string `json:"cms"`
+		ActionCode  string `json:"action_code"`
+		Comment     string `json:"comment"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -453,7 +480,7 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 	var stepIdx int
 	var defRaw, fieldsRaw []byte
 	// Every decision locks the instance; concurrent approvals cannot advance a stage twice.
-	err = tx.QueryRow(r.Context(), "SELECT wi.document_id,wi.status,wi.current_step,wi.definition_snapshot,d.fields,d.title FROM workflow_instances wi JOIN documents d ON d.id=wi.document_id WHERE wi.id=$1 FOR UPDATE OF wi", instance).Scan(&docID, &instStatus, &stepIdx, &defRaw, &fieldsRaw, &title)
+	err = tx.QueryRow(r.Context(), "SELECT wi.document_id,wi.status,wi.current_step,wi.definition_snapshot,d.fields,d.title FROM workflow_instances wi JOIN documents d ON d.id=wi.document_id WHERE wi.id=$1 FOR UPDATE OF wi,d", instance).Scan(&docID, &instStatus, &stepIdx, &defRaw, &fieldsRaw, &title)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -506,6 +533,12 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 	if (action.CommentRequired || action.Effect == "return" || action.Effect == "reject") && strings.TrimSpace(in.Comment) == "" {
 		fail(w, 400, "Для этого действия требуется комментарий")
 		return
+	}
+	if flow.Steps[taskStep].Kind == "signing" && action.Effect == "complete" {
+		if err = s.acceptSignature(r.Context(), tx, docID, taskID, p.ID, in.ChallengeID, in.CMS); err != nil {
+			journalError(w, err)
+			return
+		}
 	}
 	status := ""
 	switch action.Effect {
@@ -577,6 +610,19 @@ func (s *Server) decideTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		if flow.Steps[taskStep].Kind == "registration" {
+			done, e := s.registrationStepDone(r.Context(), tx, instance, taskStep, flow.Steps[taskStep].Mode)
+			if e != nil {
+				errDB(w, e)
+				return
+			}
+			if done {
+				if e = s.assignJournalNumber(r.Context(), tx, docID, p.ID, "registration"); e != nil {
+					journalError(w, e)
+					return
+				}
+			}
+		}
 		isDone, e := s.groupDone(r.Context(), tx, instance, flow, stepIdx)
 		if e != nil {
 			errDB(w, e)

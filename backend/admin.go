@@ -79,7 +79,7 @@ func checkFields(defs []FieldDef) string {
 	return ""
 }
 func (s *Server) users(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(r.Context(), `SELECT u.id,u.email,u.full_name,u.role,u.active,coalesce(u.department_id::text,''),coalesce(u.position_id::text,'') FROM users u ORDER BY u.full_name`)
+	rows, err := s.db.Query(r.Context(), `SELECT u.id,u.email,u.full_name,u.role,u.active,coalesce(u.department_id::text,''),coalesce(u.position_id::text,''),CASE WHEN $1='admin' THEN u.signing_iin ELSE '' END FROM users u ORDER BY u.full_name`, me(r).Role)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -87,13 +87,13 @@ func (s *Server) users(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, email, name, role, dep, pos string
+		var id, email, name, role, dep, pos, iin string
 		var active bool
-		if e := rows.Scan(&id, &email, &name, &role, &active, &dep, &pos); e != nil {
+		if e := rows.Scan(&id, &email, &name, &role, &active, &dep, &pos, &iin); e != nil {
 			errDB(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "email": email, "full_name": name, "role": role, "active": active, "department_id": dep, "position_id": pos})
+		out = append(out, map[string]any{"id": id, "email": email, "full_name": name, "role": role, "active": active, "department_id": dep, "position_id": pos, "signing_iin": iin})
 	}
 	respond(w, 200, out)
 }
@@ -207,7 +207,7 @@ func (s *Server) createPosition(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, map[string]string{"id": id})
 }
 func (s *Server) documentTypes(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(r.Context(), "SELECT id,code,name,fields,active,coalesce(default_workflow_key,''),card_fields FROM document_types ORDER BY name")
+	rows, err := s.db.Query(r.Context(), "SELECT id,code,name,fields,active,coalesce(default_workflow_key,''),card_fields,coalesce(project_journal_id::text,''),coalesce(registration_journal_id::text,'') FROM document_types ORDER BY name")
 	if err != nil {
 		errDB(w, err)
 		return
@@ -215,25 +215,27 @@ func (s *Server) documentTypes(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, code, name, defaultKey string
+		var id, code, name, defaultKey, projectJournal, registrationJournal string
 		var fields, cardFields json.RawMessage
 		var active bool
-		if e := rows.Scan(&id, &code, &name, &fields, &active, &defaultKey, &cardFields); e != nil {
+		if e := rows.Scan(&id, &code, &name, &fields, &active, &defaultKey, &cardFields, &projectJournal, &registrationJournal); e != nil {
 			errDB(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "code": code, "name": name, "fields": fields, "active": active, "default_workflow_key": defaultKey, "card_fields": cardFields})
+		out = append(out, map[string]any{"id": id, "code": code, "name": name, "fields": fields, "active": active, "default_workflow_key": defaultKey, "card_fields": cardFields, "project_journal_id": projectJournal, "registration_journal_id": registrationJournal})
 	}
 	respond(w, 200, out)
 }
 
 type docTypeInput struct {
-	Code               string      `json:"code"`
-	Name               string      `json:"name"`
-	Fields             []FieldDef  `json:"fields"`
-	CardFields         []CardField `json:"card_fields"`
-	Active             *bool       `json:"active,omitempty"`
-	DefaultWorkflowKey string      `json:"default_workflow_key"`
+	ProjectJournalID      string      `json:"project_journal_id"`
+	RegistrationJournalID string      `json:"registration_journal_id"`
+	Code                  string      `json:"code"`
+	Name                  string      `json:"name"`
+	Fields                []FieldDef  `json:"fields"`
+	CardFields            []CardField `json:"card_fields"`
+	Active                *bool       `json:"active,omitempty"`
+	DefaultWorkflowKey    string      `json:"default_workflow_key"`
 }
 
 func (s *Server) validDefaultWorkflow(ctx context.Context, key, typeID string) bool {
@@ -272,6 +274,10 @@ func (s *Server) createDocumentType(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Маршрут по умолчанию не найден или не подходит типу")
 		return
 	}
+	if !s.validJournals(r.Context(), v.ProjectJournalID, v.RegistrationJournalID) {
+		fail(w, 400, "Выберите активные журналы соответствующего вида")
+		return
+	}
 	b, _ := json.Marshal(v.Fields)
 	if v.CardFields == nil {
 		v.CardFields = []CardField{}
@@ -282,7 +288,7 @@ func (s *Server) createDocumentType(w http.ResponseWriter, r *http.Request) {
 		active = *v.Active
 	}
 	var id string
-	err := s.db.QueryRow(r.Context(), "INSERT INTO document_types(code,name,fields,default_workflow_key,card_fields,active) VALUES($1,$2,$3,$4,$5,$6) RETURNING id", v.Code, v.Name, b, nullableStr(v.DefaultWorkflowKey), card, active).Scan(&id)
+	err := s.db.QueryRow(r.Context(), "INSERT INTO document_types(code,name,fields,default_workflow_key,card_fields,active,project_journal_id,registration_journal_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id", v.Code, v.Name, b, nullableStr(v.DefaultWorkflowKey), card, active, nullableStr(v.ProjectJournalID), nullableStr(v.RegistrationJournalID)).Scan(&id)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -316,6 +322,10 @@ func (s *Server) updateDocumentType(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Маршрут по умолчанию не найден или не подходит типу")
 		return
 	}
+	if !s.validJournals(r.Context(), v.ProjectJournalID, v.RegistrationJournalID) {
+		fail(w, 400, "Выберите активные журналы соответствующего вида")
+		return
+	}
 	b, _ := json.Marshal(v.Fields)
 	if v.CardFields == nil {
 		v.CardFields = []CardField{}
@@ -325,7 +335,7 @@ func (s *Server) updateDocumentType(w http.ResponseWriter, r *http.Request) {
 	if v.Active != nil {
 		active = *v.Active
 	}
-	tag, err := s.db.Exec(r.Context(), "UPDATE document_types SET name=$1,fields=$2,active=$3,default_workflow_key=$5,card_fields=$6 WHERE id=$4", v.Name, b, active, r.PathValue("id"), nullableStr(v.DefaultWorkflowKey), card)
+	tag, err := s.db.Exec(r.Context(), "UPDATE document_types SET name=$1,fields=$2,active=$3,default_workflow_key=$5,card_fields=$6,project_journal_id=$7,registration_journal_id=$8 WHERE id=$4", v.Name, b, active, r.PathValue("id"), nullableStr(v.DefaultWorkflowKey), card, nullableStr(v.ProjectJournalID), nullableStr(v.RegistrationJournalID))
 	if err != nil {
 		errDB(w, err)
 		return
@@ -342,10 +352,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var v struct {
-		Role         string `json:"role"`
-		Active       bool   `json:"active"`
-		DepartmentID string `json:"department_id"`
-		PositionID   string `json:"position_id"`
+		Role         string  `json:"role"`
+		Active       bool    `json:"active"`
+		SigningIIN   *string `json:"signing_iin"`
+		DepartmentID string  `json:"department_id"`
+		PositionID   string  `json:"position_id"`
 	}
 	if !decode(w, r, &v) {
 		return
@@ -354,11 +365,15 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Некорректная роль")
 		return
 	}
+	if v.SigningIIN != nil && *v.SigningIIN != "" && !iinPattern.MatchString(*v.SigningIIN) {
+		fail(w, 400, "ИИН должен содержать 12 цифр")
+		return
+	}
 	if r.PathValue("id") == me(r).ID && (!v.Active || v.Role != "admin") {
 		fail(w, 409, "Нельзя отключить свою административную учётную запись")
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), "UPDATE users SET role=$1,active=$2,department_id=$3,position_id=$4 WHERE id=$5", v.Role, v.Active, nullableStr(v.DepartmentID), nullableStr(v.PositionID), r.PathValue("id"))
+	tag, err := s.db.Exec(r.Context(), "UPDATE users SET role=$1,active=$2,department_id=$3,position_id=$4,signing_iin=coalesce($6,signing_iin) WHERE id=$5", v.Role, v.Active, nullableStr(v.DepartmentID), nullableStr(v.PositionID), r.PathValue("id"), v.SigningIIN)
 	if err != nil {
 		errDB(w, err)
 		return

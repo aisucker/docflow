@@ -8,7 +8,7 @@ export default function DocumentEditor({types,users,departments,onClose,saved,no
  const [typeID,setTypeID]=useState(initial?.type_id||types.find(t=>t.active)?.id||'');
  const [title,setTitle]=useState(initial?.title||'');
  const [summary,setSummary]=useState(initial?.summary||'');
- const [number,setNumber]=useState(initial?.registration_number||'');
+ const number=initial?.registration_number||'';
  const [due,setDue]=useState(initial?.due_at?.substring(0,16)||'');
  const [assignee,setAssignee]=useState(initial?.assignee_id||'');
  const [department,setDepartment]=useState(initial?.department_id||'');
@@ -23,7 +23,7 @@ export default function DocumentEditor({types,users,departments,onClose,saved,no
  function standard(field:CardField){const label=field.label+(field.required?' *':'');const common={required:field.required,placeholder:field.placeholder||'',id:`card-${field.key}`};switch(field.key){
   case 'title':return <label className="full" key={field.key}>{label}<input {...common} value={title} maxLength={500} onChange={e=>setTitle(e.target.value)}/></label>;
   case 'summary':return <label className="full" key={field.key}>{label}<textarea {...common} value={summary} rows={3} onChange={e=>setSummary(e.target.value)}/></label>;
-  case 'registration_number':return <label key={field.key}>{label}<input {...common} value={number} onChange={e=>setNumber(e.target.value)}/></label>;
+  case 'registration_number':return <label key={field.key}>{field.label}<input readOnly value={number} placeholder="Будет присвоен при регистрации"/><small className="card-field-hint">Номер выдаётся из журнала типа документа.</small></label>;
   case 'assignee_id':return <label key={field.key}>{label}<select required={field.required} value={assignee} onChange={e=>setAssignee(e.target.value)}><option value="">{field.placeholder||'Не назначен'}</option>{users.filter(u=>u.active||u.id===assignee).map(u=><option key={u.id} value={u.id}>{u.full_name}</option>)}</select></label>;
   case 'department_id':return <label key={field.key}>{label}<select required={field.required} value={department} onChange={e=>setDepartment(e.target.value)}><option value="">{field.placeholder||'Не выбрано'}</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>;
   case 'due_at':return <label key={field.key}>{label}<input type="datetime-local" required={field.required} value={due} onChange={e=>setDue(e.target.value)}/></label>;

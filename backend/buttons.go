@@ -37,6 +37,12 @@ func (s *Server) prepareFlow(ctx context.Context, f *Flow) string {
 		}
 		if st.ButtonCodes == nil {
 			st.ButtonCodes = []string{"approve", "return", "reject"}
+			if st.Kind == "signing" {
+				st.ButtonCodes = []string{"sign", "return", "reject"}
+			}
+			if st.Kind == "registration" {
+				st.ButtonCodes = []string{"register", "return"}
+			}
 		}
 		st.Actions = []WorkflowButton{}
 		seen := map[string]bool{}

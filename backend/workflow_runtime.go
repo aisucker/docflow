@@ -126,18 +126,22 @@ func (s *Server) resolveAssignees(ctx context.Context, tx pgx.Tx, step Step, doc
 	return ids, nil
 }
 
-func (s *Server) validateSourceRefs(ctx context.Context, flow Flow) string {
+type rowQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func (s *Server) validateSourceRefs(ctx context.Context, flow Flow, db rowQuerier) string {
 	for _, step := range flow.Steps {
 		for _, src := range step.Assignees {
 			if src.Kind == "user" {
 				var active bool
-				if err := s.db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", src.ID).Scan(&active); err != nil || !active {
+				if err := db.QueryRow(ctx, "SELECT active FROM users WHERE id=$1", src.ID).Scan(&active); err != nil || !active {
 					return "Пользователь для этапа «" + step.Title + "» отсутствует или заблокирован"
 				}
 			}
 			if src.Kind == "group" {
 				var exists bool
-				if err := s.db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM workflow_groups WHERE id=$1 AND active=true)", src.ID).Scan(&exists); err != nil || !exists {
+				if err := db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM workflow_groups WHERE id=$1 AND active=true)", src.ID).Scan(&exists); err != nil || !exists {
 					return "Группа для этапа «" + step.Title + "» не найдена или отключена"
 				}
 			}
