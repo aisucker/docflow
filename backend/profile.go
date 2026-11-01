@@ -10,6 +10,7 @@ import (
 type profilePreferences struct {
 	Compact   bool   `json:"compact"`
 	StartPage string `json:"start_page"`
+	Theme     string `json:"theme,omitempty"`
 }
 
 func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
@@ -31,6 +32,9 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
 	}
 	if preferences.StartPage == "" {
 		preferences.StartPage = "documents"
+	}
+	if preferences.Theme != "dark" {
+		preferences.Theme = "light"
 	}
 	respond(w, 200, map[string]any{"id": id, "email": email, "full_name": name, "role": role, "department_name": department, "position_name": position, "joined_at": joined, "preferences": preferences})
 }
@@ -63,8 +67,12 @@ func (s *Server) updateProfilePreferences(w http.ResponseWriter, r *http.Request
 		fail(w, 400, "Неизвестная стартовая страница")
 		return
 	}
+	if in.Theme != "" && in.Theme != "light" && in.Theme != "dark" {
+		fail(w, 400, "Неизвестная тема оформления")
+		return
+	}
 	raw, _ := json.Marshal(in)
-	if _, err := s.db.Exec(r.Context(), "UPDATE users SET preferences=$1 WHERE id=$2", raw, me(r).ID); err != nil {
+	if _, err := s.db.Exec(r.Context(), "UPDATE users SET preferences=preferences || $1::jsonb WHERE id=$2", raw, me(r).ID); err != nil {
 		errDB(w, err)
 		return
 	}
@@ -84,4 +92,24 @@ func (s *Server) profileOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, map[string]int{"pending_tasks": pending, "overdue_tasks": overdue, "my_documents": mine, "drafts": drafts})
+}
+
+// Theme changes merge one key without replacing other interface preferences.
+func (s *Server) updateProfileTheme(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Theme string `json:"theme"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Theme != "light" && in.Theme != "dark" {
+		fail(w, 400, "Неизвестная тема оформления")
+		return
+	}
+	raw, _ := json.Marshal(map[string]string{"theme": in.Theme})
+	if _, err := s.db.Exec(r.Context(), "UPDATE users SET preferences=preferences || $1::jsonb WHERE id=$2", raw, me(r).ID); err != nil {
+		errDB(w, err)
+		return
+	}
+	s.profile(w, r)
 }

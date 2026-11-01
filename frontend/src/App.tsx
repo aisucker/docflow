@@ -1,6 +1,7 @@
 import ControlDesk from './ControlDesk';
+import {applyTheme} from './theme';
 import VerifyPDF from './VerifyPDF';
-import {useCallback,useEffect,useRef,useState,type FormEvent,type ReactNode} from 'react';
+import {useCallback,useEffect,useLayoutEffect,useRef,useState,type FormEvent,type ReactNode} from 'react';
 import {date,readSession,request,statusName,writeSession,type Department,type DocType,type Identity,type Task,type Template,type User,type Workflow} from './model';
 import Admin from './Admin';
 import DocumentPage from './DocumentPage';
@@ -40,6 +41,7 @@ function Login({onLogin}:{onLogin:(p:Identity)=>void}){const [email,setEmail]=us
  return <div className="login-screen"><div className="login-card"><div className="brand large"><div className="brand-mark">J</div><span>DocJet</span></div><h1>Вход в систему</h1><p className="muted">Корпоративный электронный документооборот</p><form onSubmit={submit}><label>Электронная почта<input type="email" value={email} onChange={e=>setEmail(e.target.value)} required autoFocus/></label><label>Пароль<input type="password" value={password} onChange={e=>setPassword(e.target.value)} required/></label>{error&&<div className="form-error">{error}</div>}<button className="button primary stretch" disabled={loading}>{loading?'Проверка…':'Войти'}</button></form><p className="login-bottom">Доступ предоставляется администратором системы.</p></div></div>
 }
 function WorkspaceApp(){const [user,setUser]=useState<Identity|null>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [section,setSection]=useState<Section>('documents');const [journal,setJournal]=useState('all');const [adminPage,setAdminPage]=useState('types');const [tasks,setTasks]=useState<Task[]>([]);const [overdueOnly,setOverdueOnly]=useState(false);const [types,setTypes]=useState<DocType[]>([]);const [users,setUsers]=useState<User[]>([]);const [departments,setDepartments]=useState<Department[]>([]);const [workflows,setWorkflows]=useState<Workflow[]>([]);const [templates,setTemplates]=useState<Template[]>([]);const [selected,setSelected]=useState<string|null>(()=>window.location.pathname.match(/^\/documents\/([a-f0-9-]{36})$/)?.[1]||null);const [documentTab,setDocumentTab]=useState<'card'|'preview'|'progress'|'work'>('card');const [newDocument,setNewDocument]=useState(false);const [refreshKey,setRefreshKey]=useState(0);const [mobileNav,setMobileNav]=useState(false);const [notificationFocus,setNotificationFocus]=useState(0);
+ useLayoutEffect(()=>{if(user)applyTheme(user.preferences?.theme==='dark'?'dark':'light')},[user?.id,user?.preferences?.theme]);
  const reload=useCallback(()=>setRefreshKey(k=>k+1),[]);
  const refreshRun=useRef<ReturnType<typeof beginRefreshRequests>|null>(null);
  const refresh=useCallback(()=>{

@@ -1,0 +1,28 @@
+/* Shared semantic palette. Light colors remain at their existing declarations. */
+:root{color-scheme:light;background:#f3f5f6}
+:root[data-theme=dark]{
+ color-scheme:dark;background:#111a20;
+ --page:#111a20;
+ --surface:#19252d;
+ --surface-subtle:#1d2b34;
+ --surface-hover:#253640;
+ --text:#e3ebef;
+ --text-secondary:#b8c6ce;
+ --text-muted:#a1b2bc;
+ --border-subtle:#2a3b45;
+ --border:#344651;
+ --border-strong:#47616d;
+ --accent:#78d6b0;
+ --accent-soft:#203f36;
+ --border-accent:#3d6a56;
+ --danger:#f49a95;
+ --danger-soft:#462d30;
+ --border-danger:#7c4d4f;
+ --warning:#efc17a;
+ --warning-soft:#443720;
+ --border-warning:#75603d;
+ --info:#92c8ee;
+ --info-soft:#233c50;
+ --border-info:#456981;
+ scrollbar-color:#47616d #19252d;
+}

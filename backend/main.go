@@ -302,6 +302,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/notifications/{id}/read", s.authorize(s.readNotification))
 	mux.HandleFunc("PATCH /api/v1/me", s.authorize(s.updateProfile))
 	mux.HandleFunc("PUT /api/v1/me/preferences", s.authorize(s.updateProfilePreferences))
+	mux.HandleFunc("PUT /api/v1/me/theme", s.authorize(s.updateProfileTheme))
 	mux.HandleFunc("GET /api/v1/me/overview", s.authorize(s.profileOverview))
 	mux.HandleFunc("GET /api/v1/ai/status", s.authorize(s.aiStatus))
 	mux.HandleFunc("POST /api/v1/ai/chat", s.authorize(s.aiChat))

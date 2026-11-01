@@ -92,6 +92,25 @@ func TestWorkflowIntegration(t *testing.T) {
 		}
 		call(1, "PUT", "/me/preferences", map[string]any{"compact": false, "start_page": "admin"}, 400)
 		call(1, "PATCH", "/me", map[string]string{"full_name": " "}, 400)
+		call(1, "PUT", "/me/theme", map[string]string{"theme": "dark"}, 200)
+		themed := object(call(1, "GET", "/me", nil, 200))["preferences"].(map[string]any)
+		if themed["theme"] != "dark" || themed["compact"] != true || themed["start_page"] != "tasks" {
+			t.Fatalf("theme replaced preferences: %v", themed)
+		}
+		if object(call(2, "GET", "/me", nil, 200))["preferences"].(map[string]any)["theme"] != "light" {
+			t.Fatal("theme affected another account")
+		}
+		call(1, "PUT", "/me/theme", map[string]string{"theme": "sepia"}, 400)
+		call(1, "PUT", "/me/theme", map[string]string{}, 400)
+		call(1, "PUT", "/me/preferences", map[string]any{"compact": false, "start_page": "profile"}, 200)
+		if object(call(1, "GET", "/me", nil, 200))["preferences"].(map[string]any)["theme"] != "dark" {
+			t.Fatal("old client reset theme")
+		}
+		call(1, "PUT", "/me/preferences", map[string]any{"compact": false, "start_page": "profile", "theme": "invalid"}, 400)
+		call(1, "PUT", "/me/theme", map[string]string{"theme": "light"}, 200)
+		if object(call(1, "GET", "/me", nil, 200))["preferences"].(map[string]any)["theme"] != "light" {
+			t.Fatal("cannot return to light theme")
+		}
 		counts := object(call(1, "GET", "/me/overview", nil, 200))
 		if counts["pending_tasks"] != float64(0) || counts["my_documents"] != float64(0) {
 			t.Fatalf("unexpected initial overview: %v", counts)
