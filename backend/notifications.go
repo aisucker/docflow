@@ -13,6 +13,7 @@ import (
 )
 
 type notificationPreferences struct {
+	Mentions          bool `json:"mentions"`
 	Enabled           bool `json:"enabled"`
 	TaskAssigned      bool `json:"task_assigned"`
 	TaskDelegated     bool `json:"task_delegated"`
@@ -26,7 +27,7 @@ type notificationPreferences struct {
 }
 
 func defaultNotificationPreferences() notificationPreferences {
-	return notificationPreferences{true, true, true, true, true, true, true, true, true, 24}
+	return notificationPreferences{Enabled: true, TaskAssigned: true, TaskDelegated: true, TaskCompleted: true, DocumentReturned: true, DocumentRejected: true, DocumentCompleted: true, DueSoon: true, Overdue: true, Mentions: true, ReminderHours: 24}
 }
 func notificationSettings(raw []byte) (notificationPreferences, error) {
 	settings := defaultNotificationPreferences()
@@ -56,7 +57,7 @@ func (s *Server) saveNotificationPreferences(w http.ResponseWriter, r *http.Requ
 		fail(w, 400, "Укажите настройки уведомлений")
 		return
 	}
-	allowed := map[string]bool{"enabled": true, "task_assigned": true, "task_delegated": true, "task_completed": true, "document_returned": true, "document_rejected": true, "document_completed": true, "due_soon": true, "overdue": true, "reminder_hours": true}
+	allowed := map[string]bool{"mentions": true, "enabled": true, "task_assigned": true, "task_delegated": true, "task_completed": true, "document_returned": true, "document_rejected": true, "document_completed": true, "due_soon": true, "overdue": true, "reminder_hours": true}
 	for key, raw := range patch {
 		if !allowed[key] || string(raw) == "null" {
 			fail(w, 400, "Неизвестная или пустая настройка уведомлений")
@@ -116,7 +117,7 @@ func insertNotification(ctx context.Context, tx pgx.Tx, user, doc, task, kind, t
 	_, err := tx.Exec(ctx, `INSERT INTO notifications(user_id,document_id,task_id,kind,title,body,dedupe_key)
  SELECT u.id,$2,$3,$4,$5,$6,$7 FROM users u WHERE u.id=$1 AND u.active=true
  AND coalesce((u.notification_preferences->>'enabled')::boolean,true)
- AND coalesce((u.notification_preferences->>$4)::boolean,true)
+ AND coalesce((u.notification_preferences->>(CASE WHEN $4='mention' THEN 'mentions' ELSE $4 END))::boolean,true)
  ON CONFLICT(user_id,dedupe_key) DO NOTHING`, user, doc, nullableStr(task), kind, title, body, key)
 	return err
 }

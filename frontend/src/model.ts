@@ -1,5 +1,5 @@
 import {trackRequest} from './refreshRequests';
-export type NotificationPreferences={enabled:boolean;task_assigned:boolean;task_delegated:boolean;task_completed:boolean;document_returned:boolean;document_rejected:boolean;document_completed:boolean;due_soon:boolean;overdue:boolean;reminder_hours:number};
+export type NotificationPreferences={enabled:boolean;mentions:boolean;task_assigned:boolean;task_delegated:boolean;task_completed:boolean;document_returned:boolean;document_rejected:boolean;document_completed:boolean;due_soon:boolean;overdue:boolean;reminder_hours:number};
 export type SystemNotification={id:number;document_id:string;task_id:string;kind:string;title:string;body:string;created_at:string;read_at:string|null};
 export type NotificationPage={items:SystemNotification[];unread_count:number;max_id:number;next_cursor:number|null};
 export type ProfilePreferences = {compact:boolean;start_page:'documents'|'tasks'|'profile'};
@@ -21,7 +21,7 @@ export type User = Identity & {signing_iin?:string;active:boolean;department_id:
 export type Department = {id:string;name:string;parent_id:string};
 export type Position = {id:string;name:string};
 export type WorkflowGroup = {id:string;name:string;active:boolean;member_ids:string[]};
-export type Document = {id:string;type_id:string;type_name:string;title:string;summary:string;status:string;registration_number:string;project_number:string;author_id:string;author_name:string;assignee_id?:string;department_id?:string;workflow_key?:string;due_at:string|null;registered_at?:string|null;fields?:Record<string,unknown>;created_at:string;updated_at:string};
+export type Document = {priority?:string;tags?:string[];favorite?:boolean;id:string;type_id:string;type_name:string;title:string;summary:string;status:string;registration_number:string;project_number:string;author_id:string;author_name:string;assignee_id?:string;department_id?:string;workflow_key?:string;due_at:string|null;registered_at?:string|null;fields?:Record<string,unknown>;created_at:string;updated_at:string};
 export type Task = {id:string;document_id:string;document_title:string;step_index:number;title:string;status:string;created_at:string;due_at:string|null};
 export type WorkflowButton = {code:string;label:string;effect:'complete'|'start'|'return'|'reject';style:'primary'|'subtle'|'danger-outline';comment_required:boolean;active:boolean};
 export type RouteTask = {instance_id?:string;actions:WorkflowButton[];kind:string;instructions:string;action_label:string;parallel_group?:string;id:string;step_index:number;step_id:string;title:string;status:string;assignee_name:string;assignee_id:string;comment:string;created_at:string;decided_at:string|null;delegated_from:string;delegated_by:string;delegated_to:string;can_delegate:boolean};
@@ -47,7 +47,7 @@ async function refreshSession(previous:Session):Promise<Session>{
  })().finally(()=>{refreshing=null})}
  return refreshing;
 }
-async function authenticatedRequest<T>(path:string,opts:RequestInit={}):Promise<T>{
+async function authenticatedRequest<T>(path:string,opts:RequestInit={},asBlob=false):Promise<T>{
  const session=readSession();const head:Record<string,string>={...(opts.headers as Record<string,string>||{})};if(session)head.Authorization=`Bearer ${session.access_token}`;
  if(opts.body && !(opts.body instanceof FormData))head['Content-Type']='application/json';
  const doFetch=()=>fetch('/api/v1'+path,{...opts,headers:head});let response=await doFetch();
@@ -55,7 +55,14 @@ async function authenticatedRequest<T>(path:string,opts:RequestInit={}):Promise<
   const next=await refreshSession(session);head.Authorization=`Bearer ${next.access_token}`;response=await doFetch();
  }
  if(!response.ok){const result=await response.json().catch(()=>({error:response.statusText}));throw new Error(result.error||`HTTP ${response.status}`)}
+ if(asBlob)return response.blob() as Promise<T>;
  if(response.status===204)return undefined as T;return response.json() as Promise<T>;
 }
 
 export function request<T>(path:string,opts:RequestInit={}):Promise<T>{return trackRequest(authenticatedRequest<T>(path,opts))}
+
+export function requestBlob(path:string,opts:RequestInit={}):Promise<Blob>{return trackRequest(authenticatedRequest<Blob>(path,opts,true))}
+
+export type SavedDocumentView={id:string;name:string;filters:Record<string,string>};
+export type DocumentWorkspace={can_edit:boolean;favorite:boolean;priority:string;tags:string[];updated_at:string;comments:{id:string;body:string;author_name:string;mention_ids:string[];created_at:string}[];checklist:{id:string;label:string;done:boolean;completed_by:string|null}[];links:{id:string;kind:string;document_id:string;title:string;status:string;outgoing:boolean}[]};
+export type CardVersion={version:number;created_at:string;editor:string};

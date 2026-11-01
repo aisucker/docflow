@@ -131,15 +131,10 @@ func (s *Server) migrate(ctx context.Context) error {
 		if e != nil {
 			return e
 		}
-		for _, statement := range strings.Split(string(b), ";") {
-			statement = strings.TrimSpace(statement)
-			if statement == "" {
-				continue
-			}
-			if _, e = tx.Exec(ctx, statement); e != nil {
-				_ = tx.Rollback(ctx)
-				return fmt.Errorf("%s: %w", f.Name(), e)
-			}
+		// Execute the whole script: PostgreSQL parses quoted function bodies and semicolons.
+		if _, e = tx.Exec(ctx, string(b)); e != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("%s: %w", f.Name(), e)
 		}
 		if _, e = tx.Exec(ctx, "INSERT INTO schema_migrations(name) VALUES($1)", f.Name()); e != nil {
 			_ = tx.Rollback(ctx)
@@ -277,6 +272,7 @@ func emit(ctx context.Context, tx pgx.Tx, kind string, payload any) error {
 }
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	s.workspaceRoutes(mux)
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]any{"status": "ok", "version": "0.5.0"})
 	})

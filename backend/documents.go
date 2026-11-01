@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -176,40 +175,12 @@ func (s *Server) readAllowed(ctx context.Context, docID string, p Principal) boo
 	return allowed
 }
 func (s *Server) listDocuments(w http.ResponseWriter, r *http.Request) {
-	p := me(r)
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	status := r.URL.Query().Get("status")
-	typ := r.URL.Query().Get("type_id")
-	journal := r.URL.Query().Get("journal")
-	limit := 50
-	if n, _ := strconv.Atoi(r.URL.Query().Get("limit")); n > 0 && n <= 100 {
-		limit = n
-	}
-	args := []any{p.ID, q, status, typ, limit, p.Role, journal}
-	rows, err := s.db.Query(r.Context(), `SELECT d.id,d.type_id,dt.name,d.title,d.summary,d.status,coalesce(d.registration_number,''),coalesce(d.project_number,''),d.author_id,u.full_name,d.created_at,d.updated_at,d.due_at
- FROM documents d JOIN document_types dt ON dt.id=d.type_id JOIN users u ON u.id=d.author_id
- WHERE d.deleted_at IS NULL AND ($6 IN ('admin','registrar') OR d.author_id=$1 OR d.assignee_id=$1 OR EXISTS(SELECT 1 FROM workflow_tasks t WHERE t.document_id=d.id AND t.assignee_id=$1))
- AND ($2='' OR d.title ILIKE '%'||$2||'%' OR d.summary ILIKE '%'||$2||'%' OR d.registration_number ILIKE '%'||$2||'%' OR d.project_number ILIKE '%'||$2||'%')
- AND ($3='' OR d.status=$3) AND ($4='' OR d.type_id::text=$4)
- AND ($7<> 'mine' OR d.author_id=$1) AND ($7<> 'inbox' OR EXISTS(SELECT 1 FROM workflow_tasks t WHERE t.document_id=d.id AND t.assignee_id=$1 AND t.status IN ('pending','in_progress')))
- ORDER BY d.created_at DESC LIMIT $5`, args...)
+	items, err := s.queryDocuments(r.Context(), me(r), r.URL.Query(), 100)
 	if err != nil {
-		errDB(w, err)
+		workspaceFail(w, err)
 		return
 	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var id, typeID, typeName, title, summary, st, num, projectNum, author, authorName string
-		var created, updated time.Time
-		var due *time.Time
-		if e := rows.Scan(&id, &typeID, &typeName, &title, &summary, &st, &num, &projectNum, &author, &authorName, &created, &updated, &due); e != nil {
-			errDB(w, e)
-			return
-		}
-		out = append(out, map[string]any{"id": id, "type_id": typeID, "type_name": typeName, "title": title, "summary": summary, "status": st, "registration_number": num, "project_number": projectNum, "author_id": author, "author_name": authorName, "created_at": created, "updated_at": updated, "due_at": due})
-	}
-	respond(w, 200, out)
+	respond(w, 200, items)
 }
 func (s *Server) createDocument(w http.ResponseWriter, r *http.Request) {
 	var v documentInput
@@ -338,6 +309,10 @@ func (s *Server) updateDocument(w http.ResponseWriter, r *http.Request) {
 	v.TypeID = typeID
 	if msg := s.checkCardValues(r.Context(), v); msg != "" {
 		fail(w, 400, msg)
+		return
+	}
+	if _, err = tx.Exec(r.Context(), "SELECT set_config('docjet.actor_id',$1,true)", p.ID); err != nil {
+		errDB(w, err)
 		return
 	}
 	b, _ := json.Marshal(v.Fields)

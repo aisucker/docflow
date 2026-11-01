@@ -2,6 +2,7 @@ import {useEffect,useState,type FormEvent} from 'react';
 import {request,type NotificationPreferences} from './model';
 
 const categories:{key:Exclude<keyof NotificationPreferences,'enabled'|'reminder_hours'>;label:string;hint:string}[]=[
+ {key:'mentions',label:'Упоминания в обсуждении',hint:'Вас упомянули в доступном вам документе'},
  {key:'task_assigned',label:'Новые задачи',hint:'Вам назначили согласование, исполнение или другой этап'},
  {key:'task_delegated',label:'Поручения',hint:'Другой сотрудник поручил вам свою задачу'},
  {key:'task_completed',label:'Решения по задачам',hint:'Получено согласование или выполнена задача по вашему документу'},
