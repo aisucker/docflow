@@ -1,3 +1,4 @@
+import {trackRequest} from './refreshRequests';
 export type NotificationPreferences={enabled:boolean;task_assigned:boolean;task_delegated:boolean;task_completed:boolean;document_returned:boolean;document_rejected:boolean;document_completed:boolean;due_soon:boolean;overdue:boolean;reminder_hours:number};
 export type SystemNotification={id:number;document_id:string;task_id:string;kind:string;title:string;body:string;created_at:string;read_at:string|null};
 export type NotificationPage={items:SystemNotification[];unread_count:number;max_id:number;next_cursor:number|null};
@@ -46,7 +47,7 @@ async function refreshSession(previous:Session):Promise<Session>{
  })().finally(()=>{refreshing=null})}
  return refreshing;
 }
-export async function request<T>(path:string,opts:RequestInit={}):Promise<T>{
+async function authenticatedRequest<T>(path:string,opts:RequestInit={}):Promise<T>{
  const session=readSession();const head:Record<string,string>={...(opts.headers as Record<string,string>||{})};if(session)head.Authorization=`Bearer ${session.access_token}`;
  if(opts.body && !(opts.body instanceof FormData))head['Content-Type']='application/json';
  const doFetch=()=>fetch('/api/v1'+path,{...opts,headers:head});let response=await doFetch();
@@ -56,3 +57,5 @@ export async function request<T>(path:string,opts:RequestInit={}):Promise<T>{
  if(!response.ok){const result=await response.json().catch(()=>({error:response.statusText}));throw new Error(result.error||`HTTP ${response.status}`)}
  if(response.status===204)return undefined as T;return response.json() as Promise<T>;
 }
+
+export function request<T>(path:string,opts:RequestInit={}):Promise<T>{return trackRequest(authenticatedRequest<T>(path,opts))}
