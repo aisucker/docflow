@@ -281,6 +281,7 @@ func emit(ctx context.Context, tx pgx.Tx, kind string, payload any) error {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	s.workspaceRoutes(mux)
+	s.controlRoutes(mux)
 	s.placeholderRoutes(mux)
 	s.officeRoutes(mux)
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {

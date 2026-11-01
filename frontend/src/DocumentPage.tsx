@@ -16,6 +16,7 @@ type Plan=RoutePlan;
 type Props={id:string;user:Identity;users:User[];departments:Department[];types:DocType[];templates:Template[];onBack:()=>void;onOpen:(id:string)=>void;changed:()=>void;initialTab:Tab;refreshKey:number};
 
 export default function DocumentPage({id,user,users,departments,types,templates,onBack,onOpen,changed,initialTab,refreshKey}:Props){
+ useEffect(()=>{void request('/documents/'+id+'/seen',{method:'POST'}).catch(()=>{})},[id]);
  const [tab,setTab]=useState<Tab>(initialTab);const [doc,setDoc]=useState<Document|null>(null);const [route,setRoute]=useState<RouteTask[]>([]);const [plan,setPlan]=useState<Plan|null>(null);const [history,setHistory]=useState<HistoryEvent[]>([]);const [files,setFiles]=useState<FileEntry[]>([]);const [editing,setEditing]=useState(false);const [selectedFile,setSelectedFile]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);
  useEffect(()=>{setTab(initialTab);setDoc(null);setSelectedFile('');setError('')},[id,initialTab]);
  const load=useCallback(async()=>{try{const [d,r,p,h,f]=await Promise.all([request<Document>('/documents/'+id),request<RouteTask[]>('/documents/'+id+'/route'),request<Plan>('/documents/'+id+'/workflow'),request<HistoryEvent[]>('/documents/'+id+'/history'),request<FileEntry[]>('/documents/'+id+'/files')]);setDoc(d);setRoute(r);setPlan(p);setHistory(h);setFiles(f)}catch(e){setError((e as Error).message)}},[id]);
