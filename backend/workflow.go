@@ -88,6 +88,10 @@ func validateFlow(f Flow) string {
 				if !goodID(src.ID) {
 					return "Некорректный пользователь или группа"
 				}
+			case "approval_field":
+				if !codePattern.MatchString(src.ID) || len(step.Assignees) != 1 || len(step.AssigneeIDs) != 0 || step.ParallelGroup != "" || (step.Kind != "" && step.Kind != "approval") {
+					return "Таблица согласования должна быть единственным источником отдельного этапа «Согласование» без параллельного блока"
+				}
 			case "document_field":
 				if !codePattern.MatchString(src.ID) {
 					return "Некорректный код поля пользователя"
@@ -362,6 +366,21 @@ func (s *Server) startWorkflow(w http.ResponseWriter, r *http.Request) {
 	var f Flow
 	if err = json.Unmarshal(defRaw, &f); err != nil {
 		fail(w, 500, "Повреждено определение маршрута")
+		return
+	}
+	var documentFields map[string]any
+	if err = json.Unmarshal(fieldsRaw, &documentFields); err != nil {
+		errDB(w, err)
+		return
+	}
+	f, err = expandApprovalFlow(f, documentFields)
+	if err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	defRaw, err = json.Marshal(f)
+	if err != nil {
+		errDB(w, err)
 		return
 	}
 	for _, step := range f.Steps {

@@ -90,6 +90,7 @@ func main() {
 	}
 	srv := &http.Server{Addr: env("APP_ADDR", ":8080"), Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	go s.webhookWorker(ctx)
+	go s.notificationWorker(ctx)
 	log.Printf("DocJet API listening on %s", srv.Addr)
 	log.Fatal(srv.ListenAndServe())
 }
@@ -262,8 +263,12 @@ func goodID(id string) bool {
 func safePath(root, token string) string { return filepath.Join(root, filepath.Base(token)) }
 func event(ctx context.Context, tx pgx.Tx, docID, actor, kind string, detail any) error {
 	b, _ := json.Marshal(detail)
-	_, err := tx.Exec(ctx, "INSERT INTO document_events(document_id,actor_id,kind,detail) VALUES($1,$2,$3,$4)", docID, nullableStr(actor), kind, b)
-	return err
+	var eventID int64
+	err := tx.QueryRow(ctx, "INSERT INTO document_events(document_id,actor_id,kind,detail) VALUES($1,$2,$3,$4) RETURNING id", docID, nullableStr(actor), kind, b).Scan(&eventID)
+	if err != nil {
+		return err
+	}
+	return notifyEvent(ctx, tx, eventID, docID, actor, kind, b)
 }
 func emit(ctx context.Context, tx pgx.Tx, kind string, payload any) error {
 	b, _ := json.Marshal(payload)
@@ -272,7 +277,9 @@ func emit(ctx context.Context, tx pgx.Tx, kind string, payload any) error {
 }
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]any{"status": "ok"}) })
+	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, 200, map[string]any{"status": "ok", "version": "0.5.0"})
+	})
 	mux.HandleFunc("GET /api/v1/public/verify/{token}", s.publicPDFVerification)
 	mux.HandleFunc("POST /api/v1/public/verify/{token}/recheck", s.recheckPDFSignature)
 	mux.HandleFunc("GET /api/v1/documents/{id}/signed-pdf", s.authorize(s.exportPDF))
@@ -281,6 +288,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
 	mux.HandleFunc("GET /api/v1/me", s.authorize(s.profile))
+	mux.HandleFunc("GET /api/v1/me/notification-preferences", s.authorize(s.getNotificationPreferences))
+	mux.HandleFunc("PUT /api/v1/me/notification-preferences", s.authorize(s.saveNotificationPreferences))
+	mux.HandleFunc("GET /api/v1/notifications", s.authorize(s.listNotifications))
+	mux.HandleFunc("POST /api/v1/notifications/read-all", s.authorize(s.readAllNotifications))
+	mux.HandleFunc("POST /api/v1/notifications/{id}/read", s.authorize(s.readNotification))
 	mux.HandleFunc("PATCH /api/v1/me", s.authorize(s.updateProfile))
 	mux.HandleFunc("PUT /api/v1/me/preferences", s.authorize(s.updateProfilePreferences))
 	mux.HandleFunc("GET /api/v1/me/overview", s.authorize(s.profileOverview))

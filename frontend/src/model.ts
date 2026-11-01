@@ -1,7 +1,10 @@
+export type NotificationPreferences={enabled:boolean;task_assigned:boolean;task_delegated:boolean;task_completed:boolean;document_returned:boolean;document_rejected:boolean;document_completed:boolean;due_soon:boolean;overdue:boolean;reminder_hours:number};
+export type SystemNotification={id:number;document_id:string;task_id:string;kind:string;title:string;body:string;created_at:string;read_at:string|null};
+export type NotificationPage={items:SystemNotification[];unread_count:number;max_id:number;next_cursor:number|null};
 export type ProfilePreferences = {compact:boolean;start_page:'documents'|'tasks'|'profile'};
 export type Identity = {id:string;email:string;full_name:string;role:string;department_name:string;position_name:string;joined_at:string;preferences:ProfilePreferences};
 export type Session = {access_token:string;refresh_token:string;expires_in:number};
-export type FieldDef = {key:string;label:string;type:'string'|'text'|'number'|'boolean'|'date'|'select'|'user'|'users';required:boolean;options?:string[];placeholder?:string;hint?:string;section?:string;full_width?:boolean};
+export type FieldDef = {key:string;label:string;type:'string'|'text'|'number'|'boolean'|'date'|'select'|'user'|'users'|'approval';required:boolean;options?:string[];placeholder?:string;hint?:string;section?:string;full_width?:boolean};
 export type CardField = {key:'title'|'summary'|'registration_number'|'assignee_id'|'department_id'|'due_at';label:string;visible:boolean;required:boolean;placeholder?:string};
 export const defaultCardFields:CardField[]=[
  {key:'registration_number',label:'Регистрационный номер',visible:true,required:false,placeholder:'При необходимости'},
@@ -25,7 +28,7 @@ export type Event = {id:number;kind:string;actor_name:string;occurred_at:string;
 export type FileEntry = {id:string;filename:string;mime_type:string;version:number;size:number;uploaded_by:string;created_at:string};
 export type Template = {id:string;name:string;type_id:string;filename:string};
 export type Condition = {field:string;operator:'eq'|'neq'|'gt'|'gte'|'lt'|'lte'|'contains';value:unknown};
-export type AssigneeSource = {kind:'user'|'group'|'document_field'|'author'|'assignee';id?:string};
+export type AssigneeSource = {kind:'user'|'group'|'document_field'|'approval_field'|'author'|'assignee';id?:string};
 export type Step = {kind?:'approval'|'task'|'acknowledgement'|'registration'|'signing';instructions?:string;button_codes?:string[];actions?:WorkflowButton[];parallel_group?:string;assignees?:AssigneeSource[];id:string;title:string;mode:'all'|'any';assignee_ids:string[];condition?:Condition};
 export type Workflow = {id:string;workflow_key:string;version:number;name:string;doc_type_id:string;active?:boolean;definition?:{steps:Step[];completion_status?:'approved'|'completed'}};
 export const date = (s?:string|null) => s ? new Date(s).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';

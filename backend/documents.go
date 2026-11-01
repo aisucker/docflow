@@ -10,6 +10,7 @@ import (
 )
 
 type documentInput struct {
+	ExpectedUpdatedAt  *time.Time     `json:"expected_updated_at,omitempty"`
 	TypeID             string         `json:"type_id"`
 	Title              string         `json:"title"`
 	Summary            string         `json:"summary"`
@@ -67,6 +68,10 @@ func validateValues(defs []FieldDef, fields map[string]any) string {
 			if id, ok := v.(string); !ok || (id != "" && !goodID(id)) {
 				return "Поле " + key + " должно содержать пользователя"
 			}
+		case "approval":
+			if _, err := parseApproval(v); err != nil {
+				return "Поле «" + f.Label + "»: " + err.Error()
+			}
 		case "users":
 			ids, ok := v.([]any)
 			if !ok || len(ids) > 200 {
@@ -84,6 +89,12 @@ func validateValues(defs []FieldDef, fields map[string]any) string {
 	}
 	for _, f := range defs {
 		v, ok := fields[f.Key]
+		if f.Type == "approval" && f.Required {
+			stages, _ := parseApproval(v)
+			if len(stages) == 0 {
+				return "Обязательное поле: " + f.Label
+			}
+		}
 		if f.Required && (!ok || v == nil || v == "" || (f.Type == "users" && len(v.([]any)) == 0)) {
 			return "Обязательное поле: " + f.Label
 		}
@@ -105,7 +116,7 @@ func (s *Server) checkDocFields(ctx context.Context, typeID string, fields map[s
 		return msg
 	}
 	for _, def := range defs {
-		if def.Type != "user" && def.Type != "users" {
+		if def.Type != "user" && def.Type != "users" && def.Type != "approval" {
 			continue
 		}
 		ids := []string{}
@@ -119,6 +130,12 @@ func (s *Server) checkDocFields(ctx context.Context, typeID string, fields map[s
 				for _, value := range values {
 					ids = append(ids, value.(string))
 				}
+			}
+		}
+		if def.Type == "approval" {
+			stages, _ := parseApproval(fields[def.Key])
+			for _, stage := range stages {
+				ids = append(ids, stage.UserIDs...)
 			}
 		}
 		for _, id := range ids {
@@ -285,7 +302,8 @@ func (s *Server) updateDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var author, st, typeID, existingNumber string
-	err = tx.QueryRow(r.Context(), "SELECT author_id,status,type_id,coalesce(registration_number,'') FROM documents WHERE id=$1 AND deleted_at IS NULL FOR UPDATE", id).Scan(&author, &st, &typeID, &existingNumber)
+	var currentUpdatedAt time.Time
+	err = tx.QueryRow(r.Context(), "SELECT author_id,status,type_id,coalesce(registration_number,''),updated_at FROM documents WHERE id=$1 AND deleted_at IS NULL FOR UPDATE", id).Scan(&author, &st, &typeID, &existingNumber, &currentUpdatedAt)
 	if err != nil {
 		errDB(w, err)
 		return
@@ -300,6 +318,10 @@ func (s *Server) updateDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	if st != "draft" && st != "returned" && st != "rejected" {
 		fail(w, 409, "Документ нельзя редактировать на согласовании или после утверждения")
+		return
+	}
+	if v.ExpectedUpdatedAt != nil && !v.ExpectedUpdatedAt.Equal(currentUpdatedAt) {
+		fail(w, 409, "Документ изменён другим запросом. Обновите карточку перед сохранением")
 		return
 	}
 	if strings.TrimSpace(v.Title) == "" {

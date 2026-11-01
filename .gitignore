@@ -13,3 +13,9 @@ docflow-api*.exe
 *.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+
+# Locally built MCP adapter and private MCP client settings
+mcp/docflow-mcp.exe
+mcp/docflow-mcp
+mcp/config.local.json
+mcp/client.local.json

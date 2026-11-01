@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "docflow": {
+      "command": "C:/path/to/docflow/mcp/docflow-mcp.exe",
+      "args": ["--config-file", "C:/path/to/docflow/mcp/config.local.json"]
+    }
+  }
+}

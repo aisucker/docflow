@@ -65,7 +65,7 @@ func checkFields(defs []FieldDef) string {
 		}
 		used[f.Key] = true
 		switch f.Type {
-		case "string", "text", "number", "boolean", "date", "select", "user", "users":
+		case "string", "text", "number", "boolean", "date", "select", "user", "users", "approval":
 		default:
 			return "Неизвестный тип поля"
 		}

@@ -28,5 +28,21 @@ func (s *Server) documentWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if instanceID == "" {
+		var fieldsRaw []byte
+		if err = s.db.QueryRow(r.Context(), "SELECT fields FROM documents WHERE id=$1", id).Scan(&fieldsRaw); err != nil {
+			errDB(w, err)
+			return
+		}
+		var fields map[string]any
+		var flow Flow
+		if json.Unmarshal(fieldsRaw, &fields) != nil || json.Unmarshal(definition, &flow) != nil {
+			fail(w, 500, "Повреждена схема маршрута")
+			return
+		}
+		if expanded, expansionErr := expandApprovalFlow(flow, fields); expansionErr == nil {
+			definition, _ = json.Marshal(expanded)
+		}
+	}
 	respond(w, 200, map[string]any{"configured": true, "workflow_key": key, "name": name, "version": version, "definition": definition, "instance_id": instanceID, "instance_status": instanceStatus, "current_step": currentStep})
 }

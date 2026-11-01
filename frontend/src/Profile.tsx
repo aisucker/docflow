@@ -1,12 +1,13 @@
 import {useEffect,useState,type FormEvent} from 'react';
 import {Icon} from './App';
+import NotificationSettings from './NotificationSettings';
 import {date,request,type Identity,type ProfilePreferences,type Task} from './model';
 
 type Overview={pending_tasks:number;overdue_tasks:number;my_documents:number;drafts:number};
-type Props={user:Identity;refreshKey:number;onUser:(user:Identity)=>void;onTasks:()=>void;onOverdue:()=>void;onDrafts:()=>void;onDocument:(id:string)=>void;notify:(message:string)=>void};
+type Props={notificationFocus:number;user:Identity;refreshKey:number;onUser:(user:Identity)=>void;onTasks:()=>void;onOverdue:()=>void;onDrafts:()=>void;onDocument:(id:string)=>void;notify:(message:string)=>void};
 const roleName:Record<string,string>={admin:'Администратор',registrar:'Регистратор',employee:'Сотрудник'};
 
-export default function Profile({user,refreshKey,onUser,onTasks,onOverdue,onDrafts,onDocument,notify}:Props){
+export default function Profile({notificationFocus,user,refreshKey,onUser,onTasks,onOverdue,onDrafts,onDocument,notify}:Props){
  const [overview,setOverview]=useState<Overview|null>(null);
  const [tasks,setTasks]=useState<Task[]>([]);
  const [fullName,setFullName]=useState(user.full_name);
@@ -36,5 +37,6 @@ export default function Profile({user,refreshKey,onUser,onTasks,onOverdue,onDraf
    <section className="profile-panel"><h3>Настройки интерфейса</h3><p className="muted">Настройки привязаны к вашей учётной записи.</p><form onSubmit={savePreferences} className="profile-form"><label>Стартовая страница<select value={preferences.start_page} onChange={e=>setPreferences({...preferences,start_page:e.target.value as ProfilePreferences['start_page']})}><option value="documents">Все документы</option><option value="tasks">Мои задачи</option><option value="profile">Личный кабинет</option></select></label><label className="profile-toggle"><input type="checkbox" checked={preferences.compact} onChange={e=>setPreferences({...preferences,compact:e.target.checked})}/><span><strong>Компактные таблицы</strong><small>Больше документов и задач помещается на экране</small></span></label><button className="button primary" disabled={saving}>Сохранить настройки</button></form></section>
    {message&&<div className="profile-saved" role="status">{message}</div>}
   </div></div>
+  <NotificationSettings focusKey={notificationFocus}/>
  </div>
 }

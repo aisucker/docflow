@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -462,4 +463,73 @@ func TestWorkflowIntegration(t *testing.T) {
 		call(1, "POST", "/tasks/"+task(id, 1, 0)+"/decision", map[string]string{"decision": "approve"}, 200)
 		status(id, "approved")
 	})
+	t.Run("approval table executes sequential and parallel stages", func(t *testing.T) {
+		defs, _ := json.Marshal([]FieldDef{{Key: "reviewers", Label: "Согласующие", Type: "approval", Required: true}})
+		if _, err := pool.Exec(context.Background(), "UPDATE document_types SET fields=$1 WHERE id=$2", defs, typ); err != nil {
+			t.Fatal(err)
+		}
+		defer pool.Exec(context.Background(), "UPDATE document_types SET fields='[]' WHERE id=$1", typ)
+		flow := Flow{Steps: []Step{{ID: "table_step", Title: "Согласование", Kind: "approval", Mode: "all", Assignees: []AssigneeSource{{Kind: "approval_field", ID: "reviewers"}}, ButtonCodes: []string{"approve", "return", "reject"}}}}
+		wf := route(flow)
+		stages := []ApprovalStage{{ID: "first_stage", Title: "По очереди", Mode: "sequential", UserIDs: users[1:]}, {ID: "second_stage", Title: "Вместе", Mode: "all", UserIDs: users[1:]}}
+		input := documentInput{TypeID: typ, Title: "Approval table", Fields: map[string]any{"reviewers": stages}}
+		id := object(call(0, "POST", "/documents", input, 201))["id"].(string)
+		plan := object(call(0, "GET", "/documents/"+id+"/workflow", nil, 200))
+		if len(plan["definition"].(map[string]any)["steps"].([]any)) != 3 {
+			t.Fatal("draft plan did not expand")
+		}
+		start(id, wf)
+		if len(tasks(id)) != 1 {
+			t.Fatal("sequential stage issued tasks simultaneously")
+		}
+		decide(2, task(id, 1, 0), "approve", "", 403)
+		decide(1, task(id, 1, 0), "approve", "", 200)
+		if len(tasks(id)) != 2 {
+			t.Fatal("next sequential participant missing")
+		}
+		decide(2, task(id, 2, 1), "approve", "", 200)
+		if len(tasks(id)) != 4 {
+			t.Fatal("parallel participants not issued together")
+		}
+		decide(1, task(id, 1, 2), "approve", "", 200)
+		status(id, "in_review")
+		decide(2, task(id, 2, 2), "approve", "", 200)
+		status(id, "approved")
+		// Persisted instance plans must not follow later card changes.
+		changed, _ := json.Marshal(map[string]any{"reviewers": []ApprovalStage{{ID: "changed_stage", Title: "Changed", Mode: "all", UserIDs: users[:1]}}})
+		if _, err := pool.Exec(context.Background(), "UPDATE documents SET fields=$1 WHERE id=$2", changed, id); err != nil {
+			t.Fatal(err)
+		}
+		plan = object(call(0, "GET", "/documents/"+id+"/workflow", nil, 200))
+		if len(plan["definition"].(map[string]any)["steps"].([]any)) != 3 {
+			t.Fatal("instance snapshot changed")
+		}
+		stages[0].Mode = "any"
+		input.Fields["reviewers"] = stages[:1]
+		another := object(call(0, "POST", "/documents", input, 201))["id"].(string)
+		start(another, wf)
+		decide(1, task(another, 1, 0), "approve", "", 200)
+		status(another, "approved")
+		decide(2, task(another, 2, 0), "approve", "", 409)
+		stages[0].UserIDs = []string{"11111111-1111-4111-8111-111111111111"}
+		input.Fields["reviewers"] = stages[:1]
+		call(0, "POST", "/documents", input, 400)
+	})
+
+	t.Run("optimistic document update prevents lost changes", func(t *testing.T) {
+		id := document()
+		card := object(call(0, "GET", "/documents/"+id, nil, 200))
+		timestamp, err := time.Parse(time.RFC3339Nano, card["updated_at"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		update := documentInput{Title: "First edit", Fields: map[string]any{}, ExpectedUpdatedAt: &timestamp}
+		call(0, "PATCH", "/documents/"+id, update, 200)
+		update.Title = "Stale edit"
+		call(0, "PATCH", "/documents/"+id, update, 409)
+		if object(call(0, "GET", "/documents/"+id, nil, 200))["title"] != "First edit" {
+			t.Fatal("stale edit overwrote current content")
+		}
+	})
+
 }

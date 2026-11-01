@@ -1,0 +1,6 @@
+{
+  "api_url": "http://127.0.0.1:8080",
+  "email": "employee@example.local",
+  "password": "replace-with-your-existing-docflow-password",
+  "read_only": false
+}
