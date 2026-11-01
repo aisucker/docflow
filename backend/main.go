@@ -52,6 +52,10 @@ func env(name, fallback string) string {
 	return fallback
 }
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--placeholder-worker" {
+		placeholderWorkerMain()
+		return
+	}
 	ctx := context.Background()
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -78,6 +82,10 @@ func main() {
 		log.Fatal(pingErr)
 	}
 	storage := env("STORAGE_DIR", "./data")
+	storage, err = filepath.Abs(storage)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if err := os.MkdirAll(storage, 0700); err != nil {
 		log.Fatal(err)
 	}
@@ -273,6 +281,8 @@ func emit(ctx context.Context, tx pgx.Tx, kind string, payload any) error {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	s.workspaceRoutes(mux)
+	s.placeholderRoutes(mux)
+	s.officeRoutes(mux)
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]any{"status": "ok", "version": "0.5.0"})
 	})

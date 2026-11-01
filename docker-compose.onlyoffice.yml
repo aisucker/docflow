@@ -1,0 +1,28 @@
+services:
+  api:
+    environment:
+      ONLYOFFICE_URL: ${ONLYOFFICE_URL:-http://localhost:8085}
+      ONLYOFFICE_INTERNAL_URL: http://onlyoffice:80
+      ONLYOFFICE_STORAGE_URL: http://api:8080
+      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:?Set ONLYOFFICE_JWT_SECRET in .env}
+  onlyoffice:
+    image: onlyoffice/documentserver:10.0.0.1
+    restart: unless-stopped
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:?Set ONLYOFFICE_JWT_SECRET in .env}
+      JWT_IN_BODY: "true"
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      ALLOW_META_IP_ADDRESS: "false"
+    ports:
+      - "127.0.0.1:8085:80"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_logs:/var/log/onlyoffice
+      - onlyoffice_lib:/var/lib/onlyoffice
+      - onlyoffice_db:/var/lib/postgresql
+volumes:
+  onlyoffice_data:
+  onlyoffice_logs:
+  onlyoffice_lib:
+  onlyoffice_db:

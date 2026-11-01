@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -41,6 +42,7 @@ func (s *Server) storeMultipart(w http.ResponseWriter, r *http.Request) (string,
 		fail(w, 413, "Размер файла превышен или неверная форма")
 		return "", "", "", 0, false
 	}
+	defer r.MultipartForm.RemoveAll()
 	in, h, err := r.FormFile("file")
 	if err != nil {
 		fail(w, 400, "Отсутствует файл")
@@ -195,7 +197,7 @@ func (s *Server) downloadFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, safePath(s.storage, key))
 }
 func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Query(r.Context(), "SELECT id,name,coalesce(type_id::text,''),filename,created_at FROM templates ORDER BY name")
+	rows, err := s.db.Query(r.Context(), "SELECT id,name,coalesce(type_id::text,''),filename,created_at,version,updated_at FROM templates ORDER BY name")
 	if err != nil {
 		errDB(w, err)
 		return
@@ -204,12 +206,13 @@ func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, name, typeID, file string
-		var created time.Time
-		if e := rows.Scan(&id, &name, &typeID, &file, &created); e != nil {
+		var created, updated time.Time
+		var version int
+		if e := rows.Scan(&id, &name, &typeID, &file, &created, &version, &updated); e != nil {
 			errDB(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "type_id": typeID, "filename": file, "created_at": created})
+		out = append(out, map[string]any{"id": id, "name": name, "type_id": typeID, "filename": file, "created_at": created, "version": version, "updated_at": updated})
 	}
 	respond(w, 200, out)
 }
@@ -224,6 +227,11 @@ func (s *Server) uploadTemplate(w http.ResponseWriter, r *http.Request) {
 	if kind != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
 		_ = os.Remove(safePath(s.storage, key))
 		fail(w, 400, "Шаблон должен быть DOCX")
+		return
+	}
+	if _, _, err := templateControlTags(safePath(s.storage, key)); err != nil {
+		_ = os.Remove(safePath(s.storage, key))
+		fail(w, 422, err.Error())
 		return
 	}
 	title := strings.TrimSpace(r.FormValue("name"))
@@ -310,15 +318,22 @@ func (s *Server) generateFile(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	var title, registration, summary, authorID, status, docType string
+	if !goodID(in.TemplateID) {
+		fail(w, 400, "Выберите шаблон")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 100*time.Second)
+	defer cancel()
+	var title, registration, summary, author, status, typeID string
 	var fields []byte
-	err := s.db.QueryRow(r.Context(), "SELECT title,coalesce(registration_number,''),summary,author_id,status,type_id,fields FROM documents WHERE id=$1", docID).Scan(&title, &registration, &summary, &authorID, &status, &docType, &fields)
+	var updated, created time.Time
+	err := s.db.QueryRow(ctx, "SELECT title,coalesce(registration_number,''),summary,author_id,status,type_id,fields,updated_at,created_at FROM documents WHERE id=$1 AND deleted_at IS NULL", docID).Scan(&title, &registration, &summary, &author, &status, &typeID, &fields, &updated, &created)
 	if err != nil {
 		errDB(w, err)
 		return
 	}
-	if p.ID != authorID && p.Role != "admin" {
-		fail(w, 403, "Генерация доступна автору")
+	if p.ID != author && p.Role != "admin" {
+		fail(w, 403, "Генерация доступна автору или администратору")
 		return
 	}
 	if status != "draft" && status != "returned" && status != "rejected" {
@@ -326,70 +341,112 @@ func (s *Server) generateFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var srcKey, templateName, templateType string
-	err = s.db.QueryRow(r.Context(), "SELECT storage_key,name,coalesce(type_id::text,'') FROM templates WHERE id=$1", in.TemplateID).Scan(&srcKey, &templateName, &templateType)
+	var templateVersion int
+	err = s.db.QueryRow(ctx, "SELECT storage_key,name,coalesce(type_id::text,''),version FROM templates WHERE id=$1", in.TemplateID).Scan(&srcKey, &templateName, &templateType, &templateVersion)
 	if err != nil {
 		errDB(w, err)
 		return
 	}
-	if templateType != "" && templateType != docType {
+	if templateType != "" && templateType != typeID {
 		fail(w, 400, "Шаблон не подходит к типу документа")
 		return
 	}
-	vals := map[string]string{"title": title, "registration_number": registration, "summary": summary, "created_at": time.Now().Format("02.01.2006")}
+	wanted, _, err := templateControlTags(safePath(s.storage, srcKey))
+	if err != nil {
+		fail(w, 422, err.Error())
+		return
+	}
+	values, versions, err := s.placeholderValues(ctx, docID, p, wanted)
+	if err != nil {
+		workspaceFail(w, err)
+		return
+	}
+	legacy := map[string]string{"title": title, "registration_number": registration, "summary": summary, "created_at": created.In(time.FixedZone("Qyzylorda", 5*3600)).Format("02.01.2006")}
 	var dynamic map[string]any
 	_ = json.Unmarshal(fields, &dynamic)
 	for k, v := range dynamic {
-		vals[k] = fmt.Sprint(v)
+		legacy[k] = fmt.Sprint(v)
 	}
-	key := randomToken()
-	if err = renderDOCX(safePath(s.storage, srcKey), safePath(s.storage, key), vals); err != nil {
-		_ = os.Remove(safePath(s.storage, key))
-		fail(w, 500, "Не удалось сформировать DOCX: проверьте шаблон")
+	dir, err := os.MkdirTemp("", "docjet-generate-")
+	if err != nil {
+		errDB(w, err)
 		return
 	}
+	defer os.RemoveAll(dir)
+	filled := filepath.Join(dir, "filled.docx")
+	if _, err = processTemplate(safePath(s.storage, srcKey), filled, values, legacy); err != nil {
+		fail(w, 422, err.Error())
+		return
+	}
+	key := randomToken()
+	path := safePath(s.storage, key)
 	defer func() {
 		if key != "" {
-			_ = os.Remove(safePath(s.storage, key))
+			_ = os.Remove(path)
 		}
 	}()
-	info, err := os.Stat(safePath(s.storage, key))
+	ctx = context.WithValue(ctx, officeAccessKey{}, officeSourceAccess{DocumentID: docID})
+	if err = s.convertOffice(ctx, filled, path, "docx"); err != nil {
+		workspaceFail(w, err)
+		return
+	}
+	if _, _, err = templateControlTags(path); err != nil {
+		fail(w, 422, "OnlyOffice вернул некорректный DOCX")
+		return
+	}
+	info, err := os.Stat(path)
 	if err != nil {
-		fail(w, 500, "Ошибка файла")
+		errDB(w, err)
 		return
 	}
 	filename := strings.TrimSuffix(templateName, filepath.Ext(templateName)) + ".docx"
-	tx, err := s.db.Begin(r.Context())
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		errDB(w, err)
 		return
 	}
-	defer tx.Rollback(r.Context())
-	var state string
-	if err = tx.QueryRow(r.Context(), "SELECT status FROM documents WHERE id=$1 FOR UPDATE", docID).Scan(&state); err != nil {
+	defer tx.Rollback(ctx)
+	var currentStatus string
+	var currentUpdated time.Time
+	err = tx.QueryRow(ctx, "SELECT status,updated_at FROM documents WHERE id=$1 AND deleted_at IS NULL FOR UPDATE", docID).Scan(&currentStatus, &currentUpdated)
+	if err != nil {
 		errDB(w, err)
 		return
 	}
-	if state != "draft" && state != "returned" && state != "rejected" {
-		fail(w, 409, "Документ перешёл на согласование")
+	if !currentUpdated.Equal(updated) || (currentStatus != "draft" && currentStatus != "returned" && currentStatus != "rejected") {
+		fail(w, 409, "Документ изменился во время генерации. Обновите карточку и повторите")
 		return
 	}
+	var currentVersion int
+	if err = tx.QueryRow(ctx, "SELECT version FROM templates WHERE id=$1 FOR SHARE", in.TemplateID).Scan(&currentVersion); err != nil {
+		errDB(w, err)
+		return
+	}
+	if currentVersion != templateVersion {
+		fail(w, 409, "Шаблон изменился во время генерации. Повторите")
+		return
+	}
+	for tagID, version := range versions {
+		if err = tx.QueryRow(ctx, "SELECT version FROM placeholder_tags WHERE id=$1 FOR SHARE", tagID).Scan(&currentVersion); err != nil || currentVersion != version {
+			fail(w, 409, "Настройка плейсхолдера изменилась во время генерации. Повторите")
+			return
+		}
+	}
 	var version int
-	err = tx.QueryRow(r.Context(), "SELECT coalesce(max(version),0)+1 FROM files WHERE document_id=$1 AND filename=$2", docID, filename).Scan(&version)
+	err = tx.QueryRow(ctx, "SELECT coalesce(max(version),0)+1 FROM files WHERE document_id=$1 AND filename=$2", docID, filename).Scan(&version)
 	if err != nil {
 		errDB(w, err)
 		return
 	}
 	var fileID string
-	err = tx.QueryRow(r.Context(), "INSERT INTO files(document_id,filename,mime_type,storage_key,size,version,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id", docID, filename, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key, info.Size(), version, p.ID).Scan(&fileID)
+	err = tx.QueryRow(ctx, "INSERT INTO files(document_id,filename,mime_type,storage_key,size,version,uploaded_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id", docID, filename, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", key, info.Size(), version, p.ID).Scan(&fileID)
+	if err == nil {
+		err = event(ctx, tx, docID, p.ID, "file.generated", map[string]any{"file_id": fileID, "template_id": in.TemplateID, "template_version": templateVersion, "placeholder_versions": versions, "engine": "onlyoffice", "content_control_tags": wanted})
+	}
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	if err != nil {
-		errDB(w, err)
-		return
-	}
-	if err = event(r.Context(), tx, docID, p.ID, "file.generated", map[string]any{"file_id": fileID, "template_id": in.TemplateID}); err != nil {
-		errDB(w, err)
-		return
-	}
-	if err = tx.Commit(r.Context()); err != nil {
 		errDB(w, err)
 		return
 	}
